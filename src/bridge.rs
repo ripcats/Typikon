@@ -1059,12 +1059,98 @@ fn typescript_lazy_item_type(ty: &Type, schema: &Schema) -> String {
     match ty {
         Type::Map(key, value) => format!(
             "{{ key: {}; value: {} }}",
-            typescript_view_type(key, schema),
-            typescript_view_type(value, schema)
+            typescript_lazy_view_type(key, schema),
+            typescript_lazy_view_type(value, schema)
         ),
-        Type::Vec(item) => typescript_view_type(item, schema),
+        Type::Vec(item) => typescript_lazy_view_type(item, schema),
         _ => typescript_view_type(ty, schema),
     }
+}
+
+fn typescript_has_lazy_view(name: &str, schema: &Schema) -> bool {
+    schema
+        .items
+        .iter()
+        .find_map(|item| match item {
+            Item::Struct(st) if st.name == name => Some(st.fields.iter().any(|field| {
+                matches!(field.ty, Type::Vec(_) | Type::Map(_, _)) && !is_bytes_type(&field.ty)
+            })),
+            _ => None,
+        })
+        .unwrap_or(false)
+}
+
+fn typescript_lazy_view_type(ty: &Type, schema: &Schema) -> String {
+    match ty {
+        Type::Primitive(name)
+            if schema.items.iter().any(|item| item_name(item) == name)
+                && typescript_has_lazy_view(name, schema) =>
+        {
+            format!("{}LazyView", name)
+        }
+        Type::Vec(item) => format!("Array<{}>", typescript_lazy_view_type(item, schema)),
+        Type::Map(key, value) => format!(
+            "Array<{{ key: {}; value: {} }}>",
+            typescript_lazy_view_type(key, schema),
+            typescript_lazy_view_type(value, schema)
+        ),
+        _ => typescript_view_type(ty, schema),
+    }
+}
+
+fn typescript_decode_lazy_expression(ty: &Type, schema: &Schema, out: &mut String) {
+    if is_bytes_type(ty) || matches!(ty, Type::Primitive(name) if name == "String") {
+        out.push_str("d.bytes()");
+        return;
+    }
+    match ty {
+        Type::Primitive(name) if schema.items.iter().any(|item| item_name(item) == name) => {
+            let suffix = if typescript_has_lazy_view(name, schema) {
+                "_lazy_view"
+            } else if typescript_named_view(name, schema) {
+                "_view"
+            } else {
+                ""
+            };
+            if suffix == "_lazy_view" {
+                out.push_str(&format!(
+                    "read_{}_lazy_view(d, wire)",
+                    name.to_ascii_lowercase()
+                ));
+            } else {
+                out.push_str(&format!("read_{}{}(d)", name.to_ascii_lowercase(), suffix));
+            }
+        }
+        Type::Primitive(name) => out.push_str(&format!("d.{}()", typescript_wire_method(name))),
+        Type::Vec(item) => {
+            out.push_str("Array.from({ length: d.varint() }, () => ");
+            typescript_decode_lazy_expression(item, schema, out);
+            out.push(')');
+        }
+        Type::Map(key, value) => {
+            out.push_str("Array.from({ length: d.varint() }, () => ({ key: ");
+            typescript_decode_lazy_expression(key, schema, out);
+            out.push_str(", value: ");
+            typescript_decode_lazy_expression(value, schema, out);
+            out.push_str(" }))");
+        }
+    }
+}
+
+fn typescript_decode_lazy_field_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut String) {
+    if let Type::Primitive(name) = ty {
+        if schema.items.iter().any(|item| item_name(item) == name)
+            && typescript_has_lazy_view(name, schema)
+        {
+            out.push_str(&format!(
+                " {} = read_{}_lazy_view(d, wire);",
+                lhs,
+                name.to_ascii_lowercase()
+            ));
+            return;
+        }
+    }
+    typescript_decode_view_type(ty, lhs, schema, out);
 }
 
 fn generate_typescript_lazy_view_struct(
@@ -1095,7 +1181,7 @@ fn generate_typescript_lazy_view_struct(
                 typescript_lazy_item_type(&field.ty, schema)
             )
         } else {
-            typescript_view_type(&field.ty, schema)
+            typescript_lazy_view_type(&field.ty, schema)
         };
         output.push_str(&format!(
             " {}{}: {};",
@@ -1120,23 +1206,24 @@ fn generate_typescript_lazy_view_struct(
             let mut item_expression = String::new();
             if let Type::Map(key, value) = &field.ty {
                 item_expression.push_str("({ key: ");
-                typescript_decode_view_expression(key, schema, &mut item_expression);
+                typescript_decode_lazy_expression(key, schema, &mut item_expression);
                 item_expression.push_str(", value: ");
-                typescript_decode_view_expression(value, schema, &mut item_expression);
+                typescript_decode_lazy_expression(value, schema, &mut item_expression);
                 item_expression.push_str(" })");
             } else {
-                typescript_decode_view_expression(item_ty, schema, &mut item_expression);
+                typescript_decode_lazy_expression(item_ty, schema, &mut item_expression);
             }
             let callback_expression = item_expression
                 .replace("d.", "itemDecoder.")
-                .replace("(d)", "(itemDecoder)");
+                .replace("(d)", "(itemDecoder)")
+                .replace("(d, wire)", "(itemDecoder, wire)");
             let scan_expression = item_expression.replace("itemDecoder.", "d.");
             let field_id = field.name.replace('_', "");
             let scan = if let Type::Map(key, value) = &field.ty {
                 let mut key_expr = String::new();
-                typescript_decode_view_expression(key, schema, &mut key_expr);
+                typescript_decode_lazy_expression(key, schema, &mut key_expr);
                 let mut value_expr = String::new();
-                typescript_decode_view_expression(value, schema, &mut value_expr);
+                typescript_decode_lazy_expression(value, schema, &mut value_expr);
                 let key_compare = if matches!(key.as_ref(), Type::Primitive(name) if name == "String")
                     || is_bytes_type(key)
                 {
@@ -1157,7 +1244,7 @@ fn generate_typescript_lazy_view_struct(
                 };
                 format!(
                     " let previousKey: {} | undefined;",
-                    typescript_view_type(key, schema)
+                    typescript_lazy_view_type(key, schema)
                 )
             } else {
                 String::new()
@@ -1178,13 +1265,13 @@ fn generate_typescript_lazy_view_struct(
             if is_collection {
                 output.push_str(&decode_collection);
             } else {
-                typescript_decode_view_type(&field.ty, &lhs, schema, output);
+                typescript_decode_lazy_field_type(&field.ty, &lhs, schema, output);
             }
             output.push_str(" }");
         } else if is_collection {
             output.push_str(&decode_collection);
         } else {
-            typescript_decode_view_type(&field.ty, &lhs, schema, output);
+            typescript_decode_lazy_field_type(&field.ty, &lhs, schema, output);
         }
     }
     output.push_str(&format!(" return value; }}\nexport function decode{name}LazyView(wire: Uint8Array): {name}LazyView {{ const d = new WireDecoder(wire); const value = read_{lower}_lazy_view(d, wire); d.done(); return value; }}\n\n"));

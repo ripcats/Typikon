@@ -240,6 +240,24 @@ fn go_lazy_item_name(parent: &str, field: &str) -> String {
     format!("read{}{}LazyItem", parent, pascal_case(field))
 }
 
+fn go_lazy_enum_field_name(enum_name: &str, variant: &str, field: &str) -> String {
+    format!(
+        "{}{}{}LazyView",
+        enum_name,
+        pascal_case(variant),
+        pascal_case(field)
+    )
+}
+
+fn go_lazy_enum_item_name(enum_name: &str, variant: &str, field: &str) -> String {
+    format!(
+        "read{}{}{}LazyItem",
+        enum_name,
+        pascal_case(variant),
+        pascal_case(field)
+    )
+}
+
 fn go_has_lazy_view(name: &str, schema: &Schema) -> bool {
     schema
         .items
@@ -453,15 +471,63 @@ fn generate_go_view_enum(item: &crate::Enum, schema: &Schema, output: &mut Strin
 }
 
 fn generate_go_lazy_view_enum(item: &crate::Enum, schema: &Schema, output: &mut String) {
+    let collections = item
+        .variants
+        .iter()
+        .flat_map(|variant| variant.fields.iter().map(move |field| (variant, field)))
+        .filter(|(_, field)| {
+            matches!(field.ty, Type::Vec(_) | Type::Map(_, _)) && !is_bytes_type(&field.ty)
+        })
+        .collect::<Vec<_>>();
     if item.variants.iter().all(|variant| {
         variant
             .fields
             .iter()
             .all(|field| !matches!(field.ty, Type::Primitive(_)))
-    }) {
+    }) && collections.is_empty()
+    {
         return;
     }
     let name = &item.name;
+    for (variant, field) in &collections {
+        let collection_name = go_lazy_enum_field_name(name, &variant.name, &field.name);
+        let item_name = go_lazy_enum_item_name(name, &variant.name, &field.name);
+        let (item_ty, decode_ty) = match &field.ty {
+            Type::Vec(ty) => (go_lazy_view_type(ty, schema), ty.as_ref().clone()),
+            Type::Map(key, value) => (
+                format!(
+                    "{}{}{}Entry",
+                    name,
+                    pascal_case(&variant.name),
+                    pascal_case(&field.name)
+                ),
+                Type::Map(key.clone(), value.clone()),
+            ),
+            _ => unreachable!(),
+        };
+        if let Type::Map(key, value) = &field.ty {
+            output.push_str(&format!(
+                "type {} struct{{ Key {}; Value {} }}\n",
+                item_ty,
+                go_lazy_view_type(key, schema),
+                go_lazy_view_type(value, schema)
+            ));
+        }
+        output.push_str(&format!("type {collection_name} struct{{ wire []byte; start,count int }}\nfunc (v {collection_name}) Len() int {{ return v.count }}\n"));
+        output.push_str(&format!(
+            "func {item_name}(d *wireDecoder) ({item_ty},error) {{ var v {item_ty}; var e error;"
+        ));
+        match decode_ty {
+            Type::Map(key, value) => {
+                go_decode_lazy_view_type(&key, "v.Key", schema, output);
+                go_decode_lazy_view_type(&value, "v.Value", schema, output);
+            }
+            ty => go_decode_lazy_view_type(&ty, "v", schema, output),
+        }
+        output.push_str("return v,e}\n");
+        output.push_str(&format!("func (v {collection_name}) At(i int) ({item_ty},bool) {{ var zero {item_ty}; if i<0||i>=v.count{{return zero,false}}; d:=wireDecoder{{b:v.wire,p:v.start}}; var value {item_ty}; var e error; for n:=0;n<=i;n++{{value,e={item_name}(&d);if e!=nil{{return zero,false}}}}; return value,true }}\n"));
+        output.push_str(&format!("type {collection_name}Iter struct{{ view {collection_name}; index int }}\nfunc (v {collection_name}) Iter() *{collection_name}Iter {{ return &{collection_name}Iter{{view:v}} }}\nfunc (it *{collection_name}Iter) Next() ({item_ty},bool) {{ value,ok:=it.view.At(it.index);it.index++;return value,ok }}\n"));
+    }
     output.push_str(&format!(
         "type {name}LazyView interface{{is{name}LazyView()}}\n"
     ));
@@ -469,11 +535,15 @@ fn generate_go_lazy_view_enum(item: &crate::Enum, schema: &Schema, output: &mut 
         let variant_name = format!("{}{}LazyView", name, variant.name);
         output.push_str(&format!("type {variant_name} struct{{"));
         for field in &variant.fields {
-            output.push_str(&format!(
-                " {} {};",
-                pascal_case(&field.name),
+            let collection = collections
+                .iter()
+                .any(|(candidate, f)| candidate.name == variant.name && f.name == field.name);
+            let ty = if collection {
+                go_lazy_enum_field_name(name, &variant.name, &field.name)
+            } else {
                 go_lazy_view_type(&field.ty, schema)
-            ));
+            };
+            output.push_str(&format!(" {} {};", pascal_case(&field.name), ty));
         }
         output.push_str(&format!(
             "}}\nfunc ({variant_name})is{name}LazyView(){{}}\n"
@@ -491,12 +561,24 @@ fn generate_go_lazy_view_enum(item: &crate::Enum, schema: &Schema, output: &mut 
             cid_bytes(&cid)
         ));
         for field in &variant.fields {
-            go_decode_lazy_view_type(
-                &field.ty,
-                &format!("v.{}", pascal_case(&field.name)),
-                schema,
-                output,
-            );
+            let collection = collections
+                .iter()
+                .find(|(candidate, f)| candidate.name == variant.name && f.name == field.name);
+            if let Some((_, collection_field)) = collection {
+                let collection_name = go_lazy_enum_field_name(name, &variant.name, &field.name);
+                let item_name = go_lazy_enum_item_name(name, &variant.name, &field.name);
+                output.push_str(&format!(
+                    "{{var n uint64;n,e=d.varint();if e!=nil{{return nil,e}};var c int;c,e=count(n);if e!=nil{{return nil,e}};var start=d.p;for i:=0;i<c;i++{{_,e={item_name}(d);if e!=nil{{return nil,e}}}};v.{}={collection_name}{{wire:d.b,start:start,count:c}};}};",
+                    pascal_case(&collection_field.name)
+                ));
+            } else {
+                go_decode_lazy_view_type(
+                    &field.ty,
+                    &format!("v.{}", pascal_case(&field.name)),
+                    schema,
+                    output,
+                );
+            }
         }
         output.push_str("return v,e;");
     }
@@ -1896,7 +1978,7 @@ mod tests {
     #[test]
     fn generated_go_and_typescript_views_cover_borrowable_fields() {
         let schema = parse_schema(
-            "#[version(10)] struct User { id: u64, name: String, tags: Vec<String>, } struct Attachment { id: u64, name: String, } enum Event { Created { user: User }, }",
+            "#[version(10)] struct User { id: u64, name: String, tags: Vec<String>, } struct Attachment { id: u64, name: String, } enum Event { Created { user: User }, } enum Batch { Items { values: Vec<String> }, }",
         )
         .unwrap();
         let go = generate_go_binding(&schema, "chat-10.h");
@@ -1914,6 +1996,8 @@ mod tests {
         assert!(typescript.contains("LazyCollection"));
         assert!(typescript.contains("borrowBinary"));
         assert!(typescript.contains("export type EventView"));
+        assert!(go.contains("func BorrowBatchLazy"));
+        assert!(go.contains("BatchItemsValuesLazyView"));
     }
 
     #[test]

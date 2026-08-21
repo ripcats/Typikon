@@ -21,7 +21,9 @@ pub use bridge::{
     BridgeKind, generate_bridge, generate_c_header, generate_go_binding, generate_python_binding,
     generate_typescript_binding,
 };
-pub use codec::{DEFAULT_MAX_PACKET_SIZE, TypikonCodec, decode_value, encode_value};
+pub use codec::{
+    DEFAULT_MAX_PACKET_SIZE, TypikonCodec, decode_borrowed_value, decode_value, encode_value,
+};
 pub use codegen::{generate_public_schema, generate_rust};
 pub use constructor::CID_BYTES;
 pub use constructor::{
@@ -33,7 +35,7 @@ pub use layer::{LayerSupport, LayerVersionNotSupported};
 pub use limits::{MAX_NESTING_DEPTH, MAX_PACKET_SIZE};
 pub use parser::parse_schema;
 pub use validate::validate;
-pub use wire::{Decoder, Encoder, WireCodec, WireError, varint_len};
+pub use wire::{BorrowedWireCodec, Decoder, Encoder, WireCodec, WireError, varint_len};
 
 /// Stable ABI version exposed to language bindings.
 pub fn ffi_abi_version() -> u16 {

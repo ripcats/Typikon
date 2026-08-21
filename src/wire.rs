@@ -33,6 +33,22 @@ pub trait WireCodec: Sized {
     }
 }
 
+pub trait BorrowedWireCodec<'a>: Sized {
+    fn decode_borrowed(decoder: &mut Decoder<'a>) -> Result<Self, WireError>;
+}
+
+impl<'a> BorrowedWireCodec<'a> for &'a str {
+    fn decode_borrowed(decoder: &mut Decoder<'a>) -> Result<Self, WireError> {
+        decoder.string_borrowed()
+    }
+}
+
+impl<'a> BorrowedWireCodec<'a> for &'a [u8] {
+    fn decode_borrowed(decoder: &mut Decoder<'a>) -> Result<Self, WireError> {
+        decoder.bytes_borrowed()
+    }
+}
+
 pub const fn varint_len(value: u64) -> usize {
     let bits = u64::BITS - value.leading_zeros();
     if bits == 0 {

@@ -2,7 +2,7 @@ include!(concat!(env!("OUT_DIR"), "/typescript-bridge.rs"));
 
 #[cfg(test)]
 mod tests {
-    use crate::messenger_10::{Presence, User, UserFlags, UserRef};
+    use crate::messenger_10::{Message, MessageRef, Presence, User, UserFlags, UserRef};
     use typikon::TypikonCodec;
 
     #[test]
@@ -24,5 +24,33 @@ mod tests {
         let end = start + wire.len();
         assert!((start..end).contains(&(borrowed.username.as_ptr() as usize)));
         assert!((start..end).contains(&(borrowed.display_name.as_ptr() as usize)));
+    }
+
+    #[test]
+    fn generated_nested_ref_reuses_the_same_packet_storage() {
+        let message = Message {
+            id: 1,
+            chat_id: 2,
+            sender: User {
+                id: 7,
+                username: "ada".into(),
+                display_name: "Ada".into(),
+                flags: UserFlags(0),
+                avatar_url: None,
+                presence: Presence::Online,
+                roles: Vec::new(),
+            },
+            text: "hello".into(),
+            attachments: Vec::new(),
+            metadata: std::collections::BTreeMap::new(),
+        };
+        let wire = message.encode().unwrap();
+        let borrowed = MessageRef::decode_borrowed(&wire).unwrap();
+        assert_eq!(borrowed.sender.username, "ada");
+        assert_eq!(borrowed.text, "hello");
+        let start = wire.as_ptr() as usize;
+        let end = start + wire.len();
+        assert!((start..end).contains(&(borrowed.sender.username.as_ptr() as usize)));
+        assert!((start..end).contains(&(borrowed.text.as_ptr() as usize)));
     }
 }

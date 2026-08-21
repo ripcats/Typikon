@@ -1463,11 +1463,17 @@ fn generate_typescript_lazy_view_enum(item: &crate::Enum, schema: &Schema, outpu
                 .fields
                 .iter()
                 .map(|field| {
-                    format!(
-                        "{}: {}",
-                        field.name,
+                    let is_collection = matches!(field.ty, Type::Vec(_) | Type::Map(_, _))
+                        && !is_bytes_type(&field.ty);
+                    let ty = if is_collection {
+                        format!(
+                            "LazyCollection<{}>",
+                            typescript_lazy_item_type(&field.ty, schema)
+                        )
+                    } else {
                         typescript_lazy_view_type(&field.ty, schema)
-                    )
+                    };
+                    format!("{}: {}", field.name, ty)
                 })
                 .collect::<Vec<_>>()
                 .join("; ");
@@ -1487,9 +1493,64 @@ fn generate_typescript_lazy_view_enum(item: &crate::Enum, schema: &Schema, outpu
         ));
         for field in &variant.fields {
             output.push_str(&format!(" {}: ", field.name));
-            let mut expr = String::new();
-            typescript_decode_lazy_expression(&field.ty, schema, &mut expr);
-            output.push_str(&expr);
+            let is_collection =
+                matches!(field.ty, Type::Vec(_) | Type::Map(_, _)) && !is_bytes_type(&field.ty);
+            if !is_collection {
+                let mut expr = String::new();
+                typescript_decode_lazy_expression(&field.ty, schema, &mut expr);
+                output.push_str(&expr);
+            } else {
+                let field_id = format!(
+                    "{}{}",
+                    variant.name.to_ascii_lowercase(),
+                    field.name.replace('_', "")
+                );
+                let mut item_expression = String::new();
+                if let Type::Map(key, value) = &field.ty {
+                    item_expression.push_str("({ key: ");
+                    typescript_decode_lazy_expression(key, schema, &mut item_expression);
+                    item_expression.push_str(", value: ");
+                    typescript_decode_lazy_expression(value, schema, &mut item_expression);
+                    item_expression.push_str(" })");
+                } else if let Type::Vec(item) = &field.ty {
+                    typescript_decode_lazy_expression(item, schema, &mut item_expression);
+                }
+                let callback_expression = item_expression
+                    .replace("d.", "itemDecoder.")
+                    .replace("(d)", "(itemDecoder)")
+                    .replace("(d, wire)", "(itemDecoder, wire)");
+                let scan_expression = item_expression.replace("itemDecoder.", "d.");
+                let scan = if let Type::Map(key, value) = &field.ty {
+                    let mut key_expr = String::new();
+                    typescript_decode_lazy_expression(key, schema, &mut key_expr);
+                    let mut value_expr = String::new();
+                    typescript_decode_lazy_expression(value, schema, &mut value_expr);
+                    let key_compare = if matches!(key.as_ref(), Type::Primitive(name) if name == "String")
+                        || is_bytes_type(key)
+                    {
+                        "wireBytesCompare(previousKey, key)"
+                    } else {
+                        "previousKey >= key ? 0 : -1"
+                    };
+                    format!(
+                        "const key = {key_expr}; if (previousKey !== undefined && {key_compare} >= 0) throw new Error('map keys are not strictly sorted'); previousKey = key; {value_expr};"
+                    )
+                } else {
+                    scan_expression
+                };
+                let previous = if let Type::Map(key, _) = &field.ty {
+                    format!(
+                        " let previousKey: {} | undefined;",
+                        typescript_lazy_view_type(key, schema)
+                    )
+                } else {
+                    String::new()
+                };
+                let item_ty = typescript_lazy_item_type(&field.ty, schema);
+                output.push_str(&format!(
+                    "(() => {{ const {field_id}Count = d.varint();{previous} const {field_id}Start = d.position(); for (let i = 0; i < {field_id}Count; i++) {{ {scan} }} return new LazyCollection(wire, {field_id}Start, {field_id}Count, (itemDecoder: WireDecoder): {item_ty} => {callback_expression}); }})()"
+                ));
+            }
             output.push(',');
         }
         output.push_str(" } };");
@@ -1996,6 +2057,8 @@ mod tests {
         assert!(typescript.contains("LazyCollection"));
         assert!(typescript.contains("borrowBinary"));
         assert!(typescript.contains("export type EventView"));
+        assert!(typescript.contains("LazyCollection<Uint8Array>"));
+        assert!(typescript.contains("itemsvaluesCount"));
         assert!(go.contains("func BorrowBatchLazy"));
         assert!(go.contains("BatchItemsValuesLazyView"));
     }

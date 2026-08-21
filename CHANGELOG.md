@@ -34,6 +34,7 @@ All notable changes to Typikon since its initial public beta are documented here
 - Added Go lazy `Iter` and TypeScript lazy `[Symbol.iterator]` APIs, plus native TypeScript and Python owner/aliasing regression checks.
 - Added recursive lazy handling across enum payloads (`BorrowUpdateLazy` / `decodeUpdateLazyView`).
 - Added packet-backed Go lazy collection views for direct `Vec`/`Map` enum payloads, including iteration.
+- Added matching packet-backed TypeScript `LazyCollection` views for direct enum collection payloads.
 
 ### Changed
 

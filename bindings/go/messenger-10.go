@@ -1,10 +1,17 @@
 package typikon
 
+/*
+#cgo CFLAGS: -I.
+#include "messenger-10.h"
+*/
+import "C"
+
 import (
 	"encoding/binary"
 	"fmt"
 	"math"
 	"sort"
+	"unsafe"
 )
 
 const maxPacketSize = 4 << 20
@@ -150,6 +157,12 @@ func cid(d *wireDecoder, want []byte) error {
 	}
 	return nil
 }
+func bridgePtr(data []byte) *C.uint8_t {
+	if len(data) == 0 {
+		return nil
+	}
+	return (*C.uint8_t)(unsafe.Pointer(&data[0]))
+}
 
 type UserFlags uint16
 
@@ -168,7 +181,12 @@ func DecodeUserFlags(b []byte) (UserFlags, error) {
 	}
 	return v, e
 }
-func ValidateUserFlags(b []byte) error { _, e := DecodeUserFlags(b); return e }
+func ValidateUserFlags(b []byte) error {
+	if C.typikon_10_user_flags_validate_borrowed(bridgePtr(b), C.size_t(len(b))) != 0 {
+		return fmt.Errorf("invalid UserFlags wire")
+	}
+	return nil
+}
 
 type Presence string
 
@@ -210,7 +228,12 @@ func DecodePresence(b []byte) (Presence, error) {
 	}
 	return v, e
 }
-func ValidatePresence(b []byte) error { _, e := DecodePresence(b); return e }
+func ValidatePresence(b []byte) error {
+	if C.typikon_10_presence_validate_borrowed(bridgePtr(b), C.size_t(len(b))) != 0 {
+		return fmt.Errorf("invalid Presence wire")
+	}
+	return nil
+}
 
 type User struct {
 	Id          uint64
@@ -303,7 +326,12 @@ func DecodeUser(b []byte) (User, error) {
 	}
 	return v, e
 }
-func ValidateUser(b []byte) error { _, e := DecodeUser(b); return e }
+func ValidateUser(b []byte) error {
+	if C.typikon_10_user_validate_borrowed(bridgePtr(b), C.size_t(len(b))) != 0 {
+		return fmt.Errorf("invalid User wire")
+	}
+	return nil
+}
 
 type Attachment struct {
 	Id       uint64
@@ -358,7 +386,12 @@ func DecodeAttachment(b []byte) (Attachment, error) {
 	}
 	return v, e
 }
-func ValidateAttachment(b []byte) error { _, e := DecodeAttachment(b); return e }
+func ValidateAttachment(b []byte) error {
+	if C.typikon_10_attachment_validate_borrowed(bridgePtr(b), C.size_t(len(b))) != 0 {
+		return fmt.Errorf("invalid Attachment wire")
+	}
+	return nil
+}
 
 type Message struct {
 	Id          uint64
@@ -471,7 +504,12 @@ func DecodeMessage(b []byte) (Message, error) {
 	}
 	return v, e
 }
-func ValidateMessage(b []byte) error { _, e := DecodeMessage(b); return e }
+func ValidateMessage(b []byte) error {
+	if C.typikon_10_message_validate_borrowed(bridgePtr(b), C.size_t(len(b))) != 0 {
+		return fmt.Errorf("invalid Message wire")
+	}
+	return nil
+}
 
 type Update interface{ isUpdate() }
 type UpdateMessageCreated struct{ Message Message }
@@ -567,4 +605,9 @@ func DecodeUpdate(b []byte) (Update, error) {
 	}
 	return v, e
 }
-func ValidateUpdate(b []byte) error { _, e := DecodeUpdate(b); return e }
+func ValidateUpdate(b []byte) error {
+	if C.typikon_10_update_validate_borrowed(bridgePtr(b), C.size_t(len(b))) != 0 {
+		return fmt.Errorf("invalid Update wire")
+	}
+	return nil
+}

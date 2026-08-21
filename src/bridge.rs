@@ -42,19 +42,26 @@ pub fn generate_c_header(schema: &Schema) -> String {
     output
 }
 
-pub fn generate_go_binding(schema: &Schema, _header_name: &str) -> String {
-    generate_go_binding_direct(schema)
+pub fn generate_go_binding(schema: &Schema, header_name: &str) -> String {
+    generate_go_binding_direct(schema, header_name)
 }
 
-fn generate_go_binding_direct(schema: &Schema) -> String {
+fn generate_go_binding_direct(schema: &Schema, header_name: &str) -> String {
     let mut output = String::from(
         r#"package typikon
+
+/*
+#cgo CFLAGS: -I.
+#include "__TYPIKON_HEADER__"
+*/
+import "C"
 
 import (
     "encoding/binary"
     "fmt"
     "math"
     "sort"
+    "unsafe"
 )
 
 const maxPacketSize = 4 << 20
@@ -95,9 +102,11 @@ func (d *wireDecoder) string()(string,error){v,e:=d.bytes();return string(v),e}
 func (d *wireDecoder) done()error{if d.p!=len(d.b){return fmt.Errorf("trailing bytes")};return nil}
 func count(n uint64)(int,error){if n>maxItems||n>uint64(^uint(0)>>1){return 0,fmt.Errorf("collection too large")};return int(n),nil}
 func cid(d *wireDecoder,want []byte)error{got,e:=d.take(8);if e!=nil||string(got)!=string(want){return fmt.Errorf("invalid constructor ID")};return nil}
+func bridgePtr(data []byte) *C.uint8_t { if len(data)==0 { return nil }; return (*C.uint8_t)(unsafe.Pointer(&data[0])) }
 
 "#,
     );
+    output = output.replace("__TYPIKON_HEADER__", header_name);
     for item in &schema.items {
         generate_go_item(item, schema, &mut output);
     }
@@ -148,7 +157,7 @@ fn generate_go_item(item: &Item, schema: &Schema, output: &mut String) {
         Item::Struct(st) => generate_go_struct(st, schema, output),
         Item::Enum(en) => generate_go_enum(en, schema, output),
     }
-    output.push_str(&format!("func Encode{name}(v {name})([]byte,error){{e:=wireEncoder{{}};encode_{function_name}(&e,v);return e.finish()}}\nfunc Decode{name}(b []byte)({name},error){{d:=wireDecoder{{b:b}};v,e:=decode_{function_name}(&d);if e==nil{{e=d.done()}};return v,e}}\nfunc Validate{name}(b []byte)error{{_,e:=Decode{name}(b);return e}}\n\n"));
+    output.push_str(&format!("func Encode{name}(v {name})([]byte,error){{e:=wireEncoder{{}};encode_{function_name}(&e,v);return e.finish()}}\nfunc Decode{name}(b []byte)({name},error){{d:=wireDecoder{{b:b}};v,e:=decode_{function_name}(&d);if e==nil{{e=d.done()}};return v,e}}\nfunc Validate{name}(b []byte)error{{if C.typikon_{}_{}_validate_borrowed(bridgePtr(b),C.size_t(len(b)))!=0{{return fmt.Errorf(\"invalid {} wire\")}};return nil}}\n\n", schema.version, function_name, name));
 }
 
 fn generate_go_struct(item: &crate::Struct, schema: &Schema, output: &mut String) {

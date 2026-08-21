@@ -122,53 +122,8 @@ fn generate_struct(item: &Struct, output: &mut String) {
         "impl typikon::TypikonCodec for {} {{\n",
         item.name
     ));
-    output.push_str("    fn encode(&self) -> Result<Vec<u8>, typikon::WireError> {\n");
-    output.push_str(&format!("        let mut encoder = typikon::ConstructorEncoder::new_with_cid({}_CID_BYTES, typikon::DEFAULT_MAX_PACKET_SIZE)?;\n", item.name.to_uppercase()));
-    for field in &item.fields {
-        if let Some(guard) = &field.guard {
-            let (owner, bit) = guard.split_once('.').unwrap_or(("flags", guard));
-            let owner_type = item
-                .fields
-                .iter()
-                .find(|candidate| candidate.name == owner)
-                .map(|candidate| rust_type(&candidate.ty))
-                .unwrap_or_else(|| owner.to_owned());
-            output.push_str(&format!("        if self.{owner}.contains({owner_type}::{}) {{ encoder.field(self.{}.as_ref().ok_or(typikon::WireError::MalformedConstructor)?)?; }}\n", const_name(bit), field.name));
-        } else {
-            output.push_str(&format!("        encoder.field(&self.{})?;\n", field.name));
-        }
-    }
-    output.push_str("        encoder.finish()\n    }\n");
-    output.push_str("    fn decode(bytes: &[u8]) -> Result<Self, typikon::WireError> {\n");
-    output.push_str(&format!("        let mut decoder = typikon::ConstructorDecoder::new_with_cid(bytes, {}_CID_BYTES, typikon::DEFAULT_MAX_PACKET_SIZE)?;\n", item.name.to_uppercase()));
-    for field in &item.fields {
-        if let Some(guard) = &field.guard {
-            let (owner, bit) = guard.split_once('.').unwrap_or(("flags", guard));
-            let owner_type = item
-                .fields
-                .iter()
-                .find(|candidate| candidate.name == owner)
-                .map(|candidate| rust_type(&candidate.ty))
-                .unwrap_or_else(|| owner.to_owned());
-            output.push_str(&format!("        let {}: Option<{}> = if {}.contains({}::{}) {{ Some(decoder.field()?) }} else {{ None }};\n", field.name, rust_type(&field.ty), owner, owner_type, const_name(bit)));
-        } else {
-            output.push_str(&format!(
-                "        let {}: {} = decoder.field()?;\n",
-                field.name,
-                rust_type(&field.ty)
-            ));
-        }
-    }
-    output.push_str("        decoder.finish()?;\n        Ok(Self { ");
-    output.push_str(
-        &item
-            .fields
-            .iter()
-            .map(|field| field.name.clone())
-            .collect::<Vec<_>>()
-            .join(", "),
-    );
-    output.push_str(" })\n    }\n}\n");
+    output.push_str("    fn encode(&self) -> Result<Vec<u8>, typikon::WireError> { let mut encoder = typikon::Encoder::new(typikon::DEFAULT_MAX_PACKET_SIZE); typikon::WireCodec::encode(self, &mut encoder)?; encoder.finish() }\n");
+    output.push_str("    fn decode(bytes: &[u8]) -> Result<Self, typikon::WireError> { let mut decoder = typikon::Decoder::new(bytes, typikon::DEFAULT_MAX_PACKET_SIZE)?; let value = <Self as typikon::WireCodec>::decode(&mut decoder)?; if decoder.is_finished() { Ok(value) } else { Err(typikon::WireError::MalformedConstructor) } }\n}\n");
     output.push_str(&format!("impl typikon::WireCodec for {} {{\n", item.name));
     output.push_str("    fn encode(&self, encoder: &mut typikon::Encoder) -> Result<(), typikon::WireError> {\n");
     output.push_str(&format!(
@@ -270,54 +225,8 @@ fn generate_enum(item: &Enum, output: &mut String) {
         "impl typikon::TypikonCodec for {} {{\n",
         item.name
     ));
-    output.push_str(
-        "    fn encode(&self) -> Result<Vec<u8>, typikon::WireError> {\n        match self {\n",
-    );
-    for variant in &item.variants {
-        let cid_name = format!(
-            "{}_{}_CID",
-            item.name.to_uppercase(),
-            variant.name.to_uppercase()
-        );
-        if variant.fields.is_empty() {
-            output.push_str(&format!("            Self::{} => {{ let encoder = typikon::ConstructorEncoder::new_with_cid({cid_name}_BYTES, typikon::DEFAULT_MAX_PACKET_SIZE)?; encoder.finish() }},\n", variant.name));
-        } else {
-            output.push_str(&format!("            Self::{} {{ {} }} => {{ let mut encoder = typikon::ConstructorEncoder::new_with_cid({cid_name}_BYTES, typikon::DEFAULT_MAX_PACKET_SIZE)?;", variant.name, variant.fields.iter().map(|field| field.name.clone()).collect::<Vec<_>>().join(", ")));
-            for field in &variant.fields {
-                output.push_str(&format!(" encoder.field({})?;", field.name));
-            }
-            output.push_str(" encoder.finish() },\n");
-        }
-    }
-    output.push_str("        }\n    }\n    fn decode(bytes: &[u8]) -> Result<Self, typikon::WireError> {\n        match typikon::constructor_cid_bytes(bytes, typikon::DEFAULT_MAX_PACKET_SIZE)? {\n");
-    for variant in &item.variants {
-        let fields = variant
-            .fields
-            .iter()
-            .map(|field| field.name.clone())
-            .collect::<Vec<_>>();
-        output.push_str(&format!("            {}_{}_CID_BYTES => {{ let mut decoder = typikon::ConstructorDecoder::new_with_cid(bytes, {}_{}_CID_BYTES, typikon::DEFAULT_MAX_PACKET_SIZE)?;", item.name.to_uppercase(), variant.name.to_uppercase(), item.name.to_uppercase(), variant.name.to_uppercase()));
-        for field in &variant.fields {
-            output.push_str(&format!(
-                " let {}: {} = decoder.field()?;",
-                field.name,
-                rust_type(&field.ty)
-            ));
-        }
-        if fields.is_empty() {
-            output.push_str(&format!(
-                " decoder.finish()?; Ok(Self::{}) }},\n",
-                variant.name
-            ));
-        } else {
-            output.push_str(&format!(
-                " decoder.finish()?; Ok(Self::{} {{ {} }}) }},\n",
-                variant.name,
-                fields.join(", ")
-            ));
-        }
-    }
-    output.push_str("            _ => Err(typikon::WireError::UnknownCId),\n        }\n    }\n}\n");
+    output.push_str("    fn encode(&self) -> Result<Vec<u8>, typikon::WireError> { let mut encoder = typikon::Encoder::new(typikon::DEFAULT_MAX_PACKET_SIZE); typikon::WireCodec::encode(self, &mut encoder)?; encoder.finish() }\n");
+    output.push_str("    fn decode(bytes: &[u8]) -> Result<Self, typikon::WireError> { let mut decoder = typikon::Decoder::new(bytes, typikon::DEFAULT_MAX_PACKET_SIZE)?; let value = <Self as typikon::WireCodec>::decode(&mut decoder)?; if decoder.is_finished() { Ok(value) } else { Err(typikon::WireError::MalformedConstructor) } }\n}\n");
     output.push_str(&format!("impl typikon::WireCodec for {} {{\n", item.name));
     output.push_str("    fn encode(&self, encoder: &mut typikon::Encoder) -> Result<(), typikon::WireError> { match self {\n");
     for variant in &item.variants {

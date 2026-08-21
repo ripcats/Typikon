@@ -5,3 +5,5 @@ target
 **/mutants.out*/
 .idea/
 0.*.md
+**/node_modules/
+**/dist/

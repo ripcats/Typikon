@@ -140,6 +140,8 @@ let text: &str = message.text;
 
 `&str` и `&[u8]` указывают прямо внутрь входного packet buffer, поэтому buffer обязан жить дольше view. Например, `MessageRef.sender` имеет тип `UserRef<'a>`, а `roles`, `attachments` и `metadata` представлены lazy borrowed views. Их итераторы декодируют элементы по мере чтения, без создания owned `Vec`/`BTreeMap`; объекты language bridge пока остаются owned values.
 
+Runtime API для этого публичный: `typikon::BorrowedWireCodec`, `typikon::decode_borrowed_value`, `typikon::BorrowedVec` и `typikon::BorrowedMap` экспортируются из crate root. Rust generated core может использовать их напрямую; Python, Go и TypeScript adapters пока возвращают owned language values, потому что их FFI lifetime/ownership contracts требуют отдельного безопасного view handle.
+
 Для transport-level framing `Encoder` также предоставляет `write_vectored`: header, packet и trailer можно отправить через один vectored write без промежуточной конкатенации. API не привязан к TCP и подходит для TCP+TLS-адаптеров; QUIC, WebSocket и WebTransport могут использовать тот же готовый packet buffer и собственные message/frame boundaries.
 
 ### Flags и Guard-биты

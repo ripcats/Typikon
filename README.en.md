@@ -140,6 +140,8 @@ let text: &str = message.text;
 
 The resulting `&str` and `&[u8]` point directly into the input packet buffer, so the buffer must outlive the view. For example, `MessageRef.sender` has type `UserRef<'a>`, while `roles`, `attachments`, and `metadata` are lazy borrowed views. Their iterators decode elements on demand without creating an owned `Vec`/`BTreeMap`; language-bridge objects remain owned values for now.
 
+The runtime API is public: `typikon::BorrowedWireCodec`, `typikon::decode_borrowed_value`, `typikon::BorrowedVec`, and `typikon::BorrowedMap` are exported from the crate root. Generated Rust cores can use them directly; Python, Go, and TypeScript adapters still return owned language values because their FFI lifetime/ownership contracts need a separate safe view handle.
+
 For transport-level framing, `Encoder` also provides `write_vectored`: a header, packet, and trailer can be sent with one vectored write without an intermediate concatenation. The API is transport-neutral and works for TCP+TLS adapters; QUIC, WebSocket, and WebTransport can use the same packet buffer with their own message/frame boundaries.
 
 ### Flags and guard bits

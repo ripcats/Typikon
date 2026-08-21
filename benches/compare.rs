@@ -17,71 +17,43 @@ use typikon::{BorrowedWireCodec, Decoder, Encoder, WireError};
 mod flatbuffers_generated {
     include!("generated/collection_generated.rs");
 }
-
 use flatbuffers_generated::typikon_bench as fb;
 
-struct CountingAllocator;
+const N: usize = 100_000;
+const C: [u8; 8] = [0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80];
+const A: [u8; 8] = [0x80, 0x70, 0x60, 0x50, 0x40, 0x30, 0x20, 0x10];
 
-static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
-
-unsafe impl GlobalAlloc for CountingAllocator {
+struct Counter;
+static ALLOCS: AtomicUsize = AtomicUsize::new(0);
+unsafe impl GlobalAlloc for Counter {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+        ALLOCS.fetch_add(1, Ordering::Relaxed);
         unsafe { System.alloc(layout) }
     }
-
-    unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-        unsafe { System.dealloc(pointer, layout) };
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(ptr, layout) }
     }
 }
-
 #[global_allocator]
-static ALLOCATOR: CountingAllocator = CountingAllocator;
-
-const ITERATIONS: usize = 100_000;
-const TL_COLLECTION: u32 = 0x1020_3040;
-const TL_ATTACHMENT: u32 = 0x5060_7080;
-const TL_VECTOR: u32 = 0x1cb5c415;
-const TYPIKON_COLLECTION: [u8; 8] = [0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80];
-const TYPIKON_ATTACHMENT: [u8; 8] = [0x80, 0x70, 0x60, 0x50, 0x40, 0x30, 0x20, 0x10];
+static GLOBAL: Counter = Counter;
 
 struct Data {
     roles: Vec<String>,
     attachments: Vec<(String, String, u64)>,
     metadata: BTreeMap<String, String>,
 }
-
-struct TypikonAttachmentView<'a> {
+struct AttachmentView<'a> {
     name: &'a str,
     mime: &'a str,
     size: u64,
 }
-
-impl<'a> BorrowedWireCodec<'a> for TypikonAttachmentView<'a> {
-    fn decode_borrowed(decoder: &mut Decoder<'a>) -> Result<Self, WireError> {
-        decoder.expect_cid_bytes(&TYPIKON_ATTACHMENT)?;
+impl<'a> BorrowedWireCodec<'a> for AttachmentView<'a> {
+    fn decode_borrowed(d: &mut Decoder<'a>) -> Result<Self, WireError> {
+        d.expect_cid_bytes(&A)?;
         Ok(Self {
-            name: decoder.string_borrowed()?,
-            mime: decoder.string_borrowed()?,
-            size: decoder.value()?,
-        })
-    }
-}
-
-struct TypikonView<'a> {
-    roles: typikon::BorrowedVec<'a, &'a str>,
-    attachments: typikon::BorrowedVec<'a, TypikonAttachmentView<'a>>,
-    metadata: typikon::BorrowedMap<'a, &'a str, &'a str>,
-}
-
-impl<'a> BorrowedWireCodec<'a> for TypikonView<'a> {
-    fn decode_borrowed(decoder: &mut Decoder<'a>) -> Result<Self, WireError> {
-        decoder.expect_cid_bytes(&TYPIKON_COLLECTION)?;
-        let _: u64 = decoder.value()?;
-        Ok(Self {
-            roles: decoder.borrowed_vec()?,
-            attachments: decoder.borrowed_vec()?,
-            metadata: decoder.borrowed_map()?,
+            name: d.string_borrowed()?,
+            mime: d.string_borrowed()?,
+            size: d.value()?,
         })
     }
 }
@@ -93,7 +65,7 @@ fn data() -> Data {
             .map(str::to_owned)
             .collect(),
         attachments: (0..8)
-            .map(|index| (format!("photo-{index}"), "image/jpeg".into(), 4096 + index))
+            .map(|i| (format!("photo-{i}"), "image/jpeg".into(), 4096 + i))
             .collect(),
         metadata: BTreeMap::from([
             ("client".into(), "web".into()),
@@ -102,60 +74,125 @@ fn data() -> Data {
         ]),
     }
 }
-
-fn ns_per_iteration(iterations: usize, mut operation: impl FnMut()) -> f64 {
-    let started = Instant::now();
-    for _ in 0..iterations {
-        operation();
+fn timed(mut f: impl FnMut()) -> f64 {
+    let start = Instant::now();
+    for _ in 0..N {
+        f();
     }
-    started.elapsed().as_nanos() as f64 / iterations as f64
+    start.elapsed().as_nanos() as f64 / N as f64
+}
+fn allocs(f: impl FnOnce()) -> usize {
+    ALLOCS.store(0, Ordering::Relaxed);
+    f();
+    ALLOCS.load(Ordering::Relaxed)
 }
 
-fn allocation_count(operation: impl FnOnce()) -> usize {
-    ALLOCATIONS.store(0, Ordering::Relaxed);
-    operation();
-    ALLOCATIONS.load(Ordering::Relaxed)
+fn typikon_encode(v: &Data) -> Vec<u8> {
+    let mut e = Encoder::with_capacity(typikon::DEFAULT_MAX_PACKET_SIZE, 512);
+    e.raw(&C).unwrap();
+    e.u64(9).unwrap();
+    e.varint(v.roles.len() as u64).unwrap();
+    for x in &v.roles {
+        e.bytes(x.as_bytes()).unwrap();
+    }
+    e.varint(v.attachments.len() as u64).unwrap();
+    for (name, mime, size) in &v.attachments {
+        e.raw(&A).unwrap();
+        e.bytes(name.as_bytes()).unwrap();
+        e.bytes(mime.as_bytes()).unwrap();
+        e.u64(*size).unwrap();
+    }
+    e.varint(v.metadata.len() as u64).unwrap();
+    for (k, v) in &v.metadata {
+        e.bytes(k.as_bytes()).unwrap();
+        e.bytes(v.as_bytes()).unwrap();
+    }
+    e.finish().unwrap()
+}
+fn typikon_owned(bytes: &[u8]) -> Data {
+    let mut d = Decoder::new(bytes, typikon::DEFAULT_MAX_PACKET_SIZE).unwrap();
+    d.expect_cid_bytes(&C).unwrap();
+    let _: u64 = d.value().unwrap();
+    let roles = d.value().unwrap();
+    let n = d.varint().unwrap() as usize;
+    let attachments = (0..n)
+        .map(|_| {
+            d.expect_cid_bytes(&A).unwrap();
+            (d.string().unwrap(), d.string().unwrap(), d.u64().unwrap())
+        })
+        .collect();
+    let n = d.varint().unwrap() as usize;
+    let mut metadata = BTreeMap::new();
+    for _ in 0..n {
+        metadata.insert(d.string().unwrap(), d.string().unwrap());
+    }
+    Data {
+        roles,
+        attachments,
+        metadata,
+    }
+}
+fn typikon_view(bytes: &[u8]) -> usize {
+    let mut d = Decoder::new(bytes, typikon::DEFAULT_MAX_PACKET_SIZE).unwrap();
+    d.expect_cid_bytes(&C).unwrap();
+    let _: u64 = d.value().unwrap();
+    let roles: typikon::BorrowedVec<'_, &'_ str> = d.borrowed_vec().unwrap();
+    let attachments: typikon::BorrowedVec<'_, AttachmentView<'_>> = d.borrowed_vec().unwrap();
+    let metadata: typikon::BorrowedMap<'_, &'_ str, &'_ str> = d.borrowed_map().unwrap();
+    let mut total = 0;
+    for x in roles.iter() {
+        total += x.unwrap().len();
+    }
+    for x in attachments.iter() {
+        let x = x.unwrap();
+        total += x.name.len() + x.mime.len() + x.size as usize;
+    }
+    for x in metadata.iter() {
+        let (k, v) = x.unwrap();
+        total += k.len() + v.len();
+    }
+    total
 }
 
-fn build_flatbuffers(value: &Data) -> Vec<u8> {
-    let mut builder = flatbuffers::FlatBufferBuilder::new();
-    let roles = value
+fn flat_encode(v: &Data) -> Vec<u8> {
+    let mut b = flatbuffers::FlatBufferBuilder::new();
+    let roles = v
         .roles
         .iter()
-        .map(|role| builder.create_string(role))
+        .map(|x| b.create_string(x))
         .collect::<Vec<_>>();
-    let attachment_offsets = value
+    let attachments = v
         .attachments
         .iter()
-        .map(|(name, mime, size)| {
-            let name = builder.create_string(name);
-            let mime = builder.create_string(mime);
+        .map(|(n, m, s)| {
+            let n = b.create_string(n);
+            let m = b.create_string(m);
             fb::Attachment::create(
-                &mut builder,
+                &mut b,
                 &fb::AttachmentArgs {
-                    name: Some(name),
-                    mime: Some(mime),
-                    size_: *size,
+                    name: Some(n),
+                    mime: Some(m),
+                    size_: *s,
                 },
             )
         })
         .collect::<Vec<_>>();
-    let keys = value
+    let keys = v
         .metadata
         .keys()
-        .map(|key| builder.create_string(key))
+        .map(|x| b.create_string(x))
         .collect::<Vec<_>>();
-    let values = value
+    let values = v
         .metadata
         .values()
-        .map(|value| builder.create_string(value))
+        .map(|x| b.create_string(x))
         .collect::<Vec<_>>();
-    let roles = builder.create_vector(&roles);
-    let attachments = builder.create_vector(&attachment_offsets);
-    let keys = builder.create_vector(&keys);
-    let values = builder.create_vector(&values);
+    let roles = b.create_vector(&roles);
+    let attachments = b.create_vector(&attachments);
+    let keys = b.create_vector(&keys);
+    let values = b.create_vector(&values);
     let root = fb::CollectionMessage::create(
-        &mut builder,
+        &mut b,
         &fb::CollectionMessageArgs {
             id: 9,
             roles: Some(roles),
@@ -164,225 +201,28 @@ fn build_flatbuffers(value: &Data) -> Vec<u8> {
             metadata_values: Some(values),
         },
     );
-    fb::finish_collection_message_buffer(&mut builder, root);
-    builder.finished_data().to_vec()
+    fb::finish_collection_message_buffer(&mut b, root);
+    b.finished_data().to_vec()
 }
-
-fn build_typikon(value: &Data) -> Vec<u8> {
-    let mut encoder = Encoder::with_capacity(typikon::DEFAULT_MAX_PACKET_SIZE, 512);
-    encoder.raw(&TYPIKON_COLLECTION).unwrap();
-    encoder.u64(9).unwrap();
-    encoder.varint(value.roles.len() as u64).unwrap();
-    for role in &value.roles {
-        encoder.bytes(role.as_bytes()).unwrap();
-    }
-    encoder.varint(value.attachments.len() as u64).unwrap();
-    for (name, mime, size) in &value.attachments {
-        encoder.raw(&TYPIKON_ATTACHMENT).unwrap();
-        encoder.bytes(name.as_bytes()).unwrap();
-        encoder.bytes(mime.as_bytes()).unwrap();
-        encoder.u64(*size).unwrap();
-    }
-    encoder.varint(value.metadata.len() as u64).unwrap();
-    for (key, value) in &value.metadata {
-        encoder.bytes(key.as_bytes()).unwrap();
-        encoder.bytes(value.as_bytes()).unwrap();
-    }
-    encoder.finish().unwrap()
-}
-
-fn decode_typikon_owned(bytes: &[u8]) -> Data {
-    let mut decoder = Decoder::new(bytes, typikon::DEFAULT_MAX_PACKET_SIZE).unwrap();
-    decoder.expect_cid_bytes(&TYPIKON_COLLECTION).unwrap();
-    black_box(decoder.u64().unwrap());
-    let roles = decoder.value().unwrap();
-    let count = decoder.varint().unwrap() as usize;
-    let attachments = (0..count)
-        .map(|_| {
-            decoder.expect_cid_bytes(&TYPIKON_ATTACHMENT).unwrap();
-            (
-                decoder.string().unwrap(),
-                decoder.string().unwrap(),
-                decoder.u64().unwrap(),
-            )
-        })
-        .collect();
-    let count = decoder.varint().unwrap() as usize;
-    let mut metadata = BTreeMap::new();
-    for _ in 0..count {
-        let key = decoder.string().unwrap();
-        let value = decoder.string().unwrap();
-        metadata.insert(key, value);
-    }
-    Data {
-        roles,
-        attachments,
-        metadata,
-    }
-}
-
-fn iterate_typikon(view: &TypikonView<'_>) -> usize {
-    let mut total = 0;
-    for role in view.roles.iter() {
-        total += role.unwrap().len();
-    }
-    for attachment in view.attachments.iter() {
-        let attachment = attachment.unwrap();
-        total += attachment.name.len() + attachment.mime.len() + attachment.size as usize;
-    }
-    for entry in view.metadata.iter() {
-        let (key, value) = entry.unwrap();
-        total += key.len() + value.len();
-    }
-    total
-}
-
-fn decode_flat_owned(bytes: &[u8]) -> Data {
-    let root = fb::root_as_collection_message(bytes).unwrap();
-    let roles = root
-        .roles()
-        .unwrap()
-        .iter()
-        .map(|role| role.to_owned())
-        .collect();
-    let attachments = root
+fn flat_owned(bytes: &[u8]) -> Data {
+    let r = fb::root_as_collection_message(bytes).unwrap();
+    let roles = r.roles().unwrap().iter().map(str::to_owned).collect();
+    let attachments = r
         .attachments()
         .unwrap()
         .iter()
-        .map(|attachment| {
+        .map(|x| {
             (
-                attachment.name().unwrap().to_owned(),
-                attachment.mime().unwrap().to_owned(),
-                attachment.size_(),
+                x.name().unwrap().to_owned(),
+                x.mime().unwrap().to_owned(),
+                x.size_(),
             )
         })
         .collect();
-    let keys = root.metadata_keys().unwrap();
-    let values = root.metadata_values().unwrap();
+    let keys = r.metadata_keys().unwrap();
+    let values = r.metadata_values().unwrap();
     let metadata = (0..keys.len())
-        .map(|index| (keys.get(index).to_owned(), values.get(index).to_owned()))
-        .collect();
-    black_box(root.id());
-    Data {
-        roles,
-        attachments,
-        metadata,
-    }
-}
-
-fn iterate_flat(bytes: &[u8]) -> usize {
-    let root = fb::root_as_collection_message(bytes).unwrap();
-    let mut total = root.id() as usize;
-    for role in root.roles().unwrap().iter() {
-        total += role.len();
-    }
-    for attachment in root.attachments().unwrap().iter() {
-        total += attachment.name().unwrap().len()
-            + attachment.mime().unwrap().len()
-            + attachment.size_() as usize;
-    }
-    for index in 0..root.metadata_keys().unwrap().len() {
-        total += root.metadata_keys().unwrap().get(index).len();
-        total += root.metadata_values().unwrap().get(index).len();
-    }
-    total
-}
-
-fn put_tl_string(output: &mut Vec<u8>, value: &str) {
-    assert!(value.len() < 254);
-    output.push(value.len() as u8);
-    output.extend_from_slice(value.as_bytes());
-    while !output.len().is_multiple_of(4) {
-        output.push(0);
-    }
-}
-
-fn put_tl_vector<T>(output: &mut Vec<u8>, values: &[T], mut encode: impl FnMut(&mut Vec<u8>, &T)) {
-    output.extend_from_slice(&TL_VECTOR.to_le_bytes());
-    output.extend_from_slice(&(values.len() as u32).to_le_bytes());
-    for value in values {
-        encode(output, value);
-    }
-}
-
-fn build_tl(value: &Data) -> Vec<u8> {
-    let mut output = Vec::new();
-    output.extend_from_slice(&TL_COLLECTION.to_le_bytes());
-    output.extend_from_slice(&9u64.to_le_bytes());
-    put_tl_vector(&mut output, &value.roles, |output, role| {
-        put_tl_string(output, role)
-    });
-    put_tl_vector(&mut output, &value.attachments, |output, attachment| {
-        output.extend_from_slice(&TL_ATTACHMENT.to_le_bytes());
-        put_tl_string(output, &attachment.0);
-        put_tl_string(output, &attachment.1);
-        output.extend_from_slice(&attachment.2.to_le_bytes());
-    });
-    let entries = value.metadata.iter().collect::<Vec<_>>();
-    put_tl_vector(&mut output, &entries, |output, (key, value)| {
-        put_tl_string(output, key);
-        put_tl_string(output, value);
-    });
-    output
-}
-
-struct Cursor<'a> {
-    bytes: &'a [u8],
-    position: usize,
-}
-
-impl<'a> Cursor<'a> {
-    fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, position: 0 }
-    }
-    fn take(&mut self, length: usize) -> &'a [u8] {
-        let end = self.position + length;
-        let result = &self.bytes[self.position..end];
-        self.position = end;
-        result
-    }
-    fn u32(&mut self) -> u32 {
-        u32::from_le_bytes(self.take(4).try_into().unwrap())
-    }
-    fn u64(&mut self) -> u64 {
-        u64::from_le_bytes(self.take(8).try_into().unwrap())
-    }
-    fn string(&mut self) -> &'a str {
-        let length = self.take(1)[0] as usize;
-        let value = std::str::from_utf8(self.take(length)).unwrap();
-        while !self.position.is_multiple_of(4) {
-            self.position += 1;
-        }
-        value
-    }
-    fn vector(&mut self) -> usize {
-        assert_eq!(self.u32(), TL_VECTOR);
-        self.u32() as usize
-    }
-}
-
-fn decode_tl_owned(bytes: &[u8]) -> Data {
-    let mut cursor = Cursor::new(bytes);
-    assert_eq!(cursor.u32(), TL_COLLECTION);
-    black_box(cursor.u64());
-    let role_count = cursor.vector();
-    let roles = (0..role_count)
-        .map(|_| cursor.string().to_owned())
-        .collect();
-    let attachment_count = cursor.vector();
-    let attachments = (0..attachment_count)
-        .map(|_| {
-            assert_eq!(cursor.u32(), TL_ATTACHMENT);
-            (
-                cursor.string().to_owned(),
-                cursor.string().to_owned(),
-                cursor.u64(),
-            )
-        })
-        .collect();
-    let metadata_count = cursor.vector();
-    let metadata = (0..metadata_count)
-        .map(|_| (cursor.string().to_owned(), cursor.string().to_owned()))
+        .map(|i| (keys.get(i).to_owned(), values.get(i).to_owned()))
         .collect();
     Data {
         roles,
@@ -390,141 +230,62 @@ fn decode_tl_owned(bytes: &[u8]) -> Data {
         metadata,
     }
 }
-
-struct TlView<'a> {
-    roles: &'a [u8],
-    attachments: &'a [u8],
-    metadata: &'a [u8],
-}
-
-fn skip_tl_vector<'a>(cursor: &mut Cursor<'a>, mut item: impl FnMut(&mut Cursor<'a>)) -> &'a [u8] {
-    let start = cursor.position;
-    let count = cursor.vector();
-    for _ in 0..count {
-        item(cursor);
+fn flat_view(bytes: &[u8]) -> usize {
+    let r = fb::root_as_collection_message(bytes).unwrap();
+    let mut total = r.id() as usize;
+    for x in r.roles().unwrap().iter() {
+        total += x.len();
     }
-    &cursor.bytes[start..cursor.position]
-}
-
-fn decode_tl_view(bytes: &[u8]) -> TlView<'_> {
-    let mut cursor = Cursor::new(bytes);
-    assert_eq!(cursor.u32(), TL_COLLECTION);
-    black_box(cursor.u64());
-    let roles = skip_tl_vector(&mut cursor, |cursor| {
-        cursor.string();
-    });
-    let attachments = skip_tl_vector(&mut cursor, |cursor| {
-        assert_eq!(cursor.u32(), TL_ATTACHMENT);
-        cursor.string();
-        cursor.string();
-        cursor.u64();
-    });
-    let metadata = skip_tl_vector(&mut cursor, |cursor| {
-        cursor.string();
-        cursor.string();
-    });
-    TlView {
-        roles,
-        attachments,
-        metadata,
+    for x in r.attachments().unwrap().iter() {
+        total += x.name().unwrap().len() + x.mime().unwrap().len() + x.size_() as usize;
     }
-}
-
-fn iterate_tl(view: &TlView<'_>) -> usize {
-    let mut roles = Cursor::new(view.roles);
-    let mut total = 0;
-    for _ in 0..roles.vector() {
-        total += roles.string().len();
-    }
-    let mut attachments = Cursor::new(view.attachments);
-    for _ in 0..attachments.vector() {
-        assert_eq!(attachments.u32(), TL_ATTACHMENT);
+    for i in 0..r.metadata_keys().unwrap().len() {
         total +=
-            attachments.string().len() + attachments.string().len() + attachments.u64() as usize;
-    }
-    let mut metadata = Cursor::new(view.metadata);
-    for _ in 0..metadata.vector() {
-        total += metadata.string().len() + metadata.string().len();
+            r.metadata_keys().unwrap().get(i).len() + r.metadata_values().unwrap().get(i).len();
     }
     total
 }
 
 fn main() {
     let value = data();
-    let typikon_wire = build_typikon(&value);
-    let flat_wire = build_flatbuffers(&value);
-    let tl_wire = build_tl(&value);
-    let typikon_encode = ns_per_iteration(ITERATIONS, || {
-        black_box(build_typikon(&value));
+    let tw = typikon_encode(&value);
+    let fw = flat_encode(&value);
+    let te = timed(|| {
+        black_box(typikon_encode(&value));
     });
-    let flat_encode = ns_per_iteration(ITERATIONS, || {
-        black_box(build_flatbuffers(&value));
+    let fe = timed(|| {
+        black_box(flat_encode(&value));
     });
-    let tl_encode = ns_per_iteration(ITERATIONS, || {
-        black_box(build_tl(&value));
+    let to = timed(|| {
+        black_box(typikon_owned(&tw));
     });
-    let typikon_owned = ns_per_iteration(ITERATIONS, || {
-        black_box(decode_typikon_owned(&typikon_wire));
+    let fo = timed(|| {
+        black_box(flat_owned(&fw));
     });
-    let typikon_view = ns_per_iteration(ITERATIONS, || {
-        let view: TypikonView<'_> = typikon::decode_borrowed_value(&typikon_wire).unwrap();
-        black_box(iterate_typikon(&view));
+    let tv = timed(|| {
+        black_box(typikon_view(&tw));
     });
-    let flat_owned = ns_per_iteration(ITERATIONS, || {
-        black_box(decode_flat_owned(&flat_wire));
+    let fv = timed(|| {
+        black_box(flat_view(&fw));
     });
-    let flat_view = ns_per_iteration(ITERATIONS, || {
-        black_box(iterate_flat(&flat_wire));
+    let toa = allocs(|| {
+        black_box(typikon_owned(&tw));
     });
-    let tl_owned = ns_per_iteration(ITERATIONS, || {
-        black_box(decode_tl_owned(&tl_wire));
+    let foa = allocs(|| {
+        black_box(flat_owned(&fw));
     });
-    let tl_view = ns_per_iteration(ITERATIONS, || {
-        let view = decode_tl_view(&tl_wire);
-        black_box(iterate_tl(&view));
+    let tva = allocs(|| {
+        black_box(typikon_view(&tw));
     });
-    let typikon_owned_allocs = allocation_count(|| {
-        black_box(decode_typikon_owned(&typikon_wire));
-    });
-    let typikon_view_allocs = allocation_count(|| {
-        let view: TypikonView<'_> = typikon::decode_borrowed_value(&typikon_wire).unwrap();
-        black_box(iterate_typikon(&view));
-    });
-    let flat_owned_allocs = allocation_count(|| {
-        black_box(decode_flat_owned(&flat_wire));
-    });
-    let flat_view_allocs = allocation_count(|| {
-        black_box(iterate_flat(&flat_wire));
-    });
-    let tl_owned_allocs = allocation_count(|| {
-        black_box(decode_tl_owned(&tl_wire));
-    });
-    let tl_view_allocs = allocation_count(|| {
-        let view = decode_tl_view(&tl_wire);
-        black_box(iterate_tl(&view));
+    let fva = allocs(|| {
+        black_box(flat_view(&fw));
     });
     println!(
-        "format=typikon bytes={} encode_ns={typikon_encode:.2} owned_decode_ns={typikon_owned:.2} borrowed_decode_and_iterate_ns={typikon_view:.2}",
-        typikon_wire.len()
+        "format=typikon bytes={} encode_ns={te:.2} owned_decode_ns={to:.2} borrowed_decode_and_iterate_ns={tv:.2} allocations_owned={toa} allocations_borrowed={tva}",
+        tw.len()
     );
     println!(
-        "format=typikon allocations_owned={} allocations_borrowed={}",
-        typikon_owned_allocs, typikon_view_allocs
-    );
-    println!(
-        "format=flatbuffers bytes={} encode_ns={flat_encode:.2} owned_decode_ns={flat_owned:.2} borrowed_decode_and_iterate_ns={flat_view:.2}",
-        flat_wire.len()
-    );
-    println!(
-        "format=flatbuffers allocations_owned={} allocations_borrowed={}",
-        flat_owned_allocs, flat_view_allocs
-    );
-    println!(
-        "format=tl_style bytes={} encode_ns={tl_encode:.2} owned_decode_ns={tl_owned:.2} borrowed_decode_and_iterate_ns={tl_view:.2}",
-        tl_wire.len()
-    );
-    println!(
-        "format=tl_style allocations_owned={} allocations_borrowed={}",
-        tl_owned_allocs, tl_view_allocs
+        "format=flatbuffers bytes={} encode_ns={fe:.2} owned_decode_ns={fo:.2} borrowed_decode_and_iterate_ns={fv:.2} allocations_owned={foa} allocations_borrowed={fva}",
+        fw.len()
     );
 }

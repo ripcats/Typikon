@@ -204,14 +204,20 @@ impl<'a> Decoder<'a> {
         Ok(f64::from_bits(self.u64()?))
     }
     pub fn bytes(&mut self) -> Result<Vec<u8>, WireError> {
+        Ok(self.bytes_borrowed()?.to_vec())
+    }
+    pub fn bytes_borrowed(&mut self) -> Result<&'a [u8], WireError> {
         let len = usize::try_from(self.varint()?).map_err(|_| WireError::IntegerOverflow)?;
         if len > self.max_size {
             return Err(WireError::PacketTooLarge);
         }
-        Ok(self.read_slice(len)?.to_vec())
+        self.read_slice(len)
     }
     pub fn string(&mut self) -> Result<String, WireError> {
-        String::from_utf8(self.bytes()?).map_err(|_| WireError::InvalidUtf8)
+        Ok(self.string_borrowed()?.to_owned())
+    }
+    pub fn string_borrowed(&mut self) -> Result<&'a str, WireError> {
+        std::str::from_utf8(self.bytes_borrowed()?).map_err(|_| WireError::InvalidUtf8)
     }
     pub fn value<T: WireCodec>(&mut self) -> Result<T, WireError> {
         T::decode(self)
@@ -437,6 +443,21 @@ mod tests {
         assert_eq!(decoder.u64().unwrap(), 0x0123456789abcdef);
         assert_eq!(decoder.i32().unwrap(), -42);
         assert_eq!(decoder.bytes().unwrap(), b"hello");
+        assert!(decoder.is_finished());
+    }
+
+    #[test]
+    fn borrowed_bytes_and_strings_share_input_storage() {
+        let mut encoder = Encoder::new(LIMIT);
+        encoder.bytes(b"payload").unwrap();
+        encoder.bytes(b"text").unwrap();
+        let bytes = encoder.finish().unwrap();
+        let mut decoder = Decoder::new(&bytes, LIMIT).unwrap();
+        let payload = decoder.bytes_borrowed().unwrap();
+        let text = decoder.string_borrowed().unwrap();
+        assert_eq!(payload, b"payload");
+        assert_eq!(text, "text");
+        assert!(bytes[payload.as_ptr() as usize - bytes.as_ptr() as usize..].starts_with(payload));
         assert!(decoder.is_finished());
     }
 

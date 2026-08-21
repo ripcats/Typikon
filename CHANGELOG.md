@@ -9,6 +9,8 @@ All notable changes to Typikon since its initial public beta are documented here
 - Public `BorrowedWireCodec<'a>` and `decode_borrowed_value` APIs.
 - Generated `TypeRef<'a>` Rust views for zero-copy decoding of direct `String` and `Vec<u8>` fields.
 - Borrowed views now propagate through direct named-struct fields, so nested `UserRef<'a>` values keep pointing into the original packet.
+- Lazy `BorrowedVec` and `BorrowedMap` views now cover repeated fields, nested structures, and map entries without materializing owned collections; enum payloads also have generated borrowed views.
+- Added transport-neutral `Encoder::write_vectored` for sending framing segments around a packet without an intermediate concatenation.
 - Reusable encoder buffers, exact generated size hints, borrowed string/byte decoding, and binary TypeScript bridge entry points.
 - Reproducible `cargo bench --bench wire` benchmark for message and 64 KiB payload paths.
 - Python, TypeScript, and Go golden wire round-trip checks.
@@ -33,9 +35,9 @@ All notable changes to Typikon since its initial public beta are documented here
 
 ### Current zero-copy scope
 
-- Zero-copy: direct Rust `String` → `&str`, `Vec<u8>` → `&[u8]`, and recursively direct named-struct fields.
-- Still owned: collection elements, enum payloads, `Map<K, V>`, and language bridges that materialize JSON/application objects.
-- Planned: recursively borrowed enums, lazy repeated/map views, and vectored TCP encoding.
+- Zero-copy: direct Rust `String` → `&str`, `Vec<u8>` → `&[u8]`, nested named structs, lazy repeated/map views, and enum payloads.
+- Still owned: language-bridge values that materialize JSON/application objects.
+- Transport integration remains adapter-owned: TCP+TLS can use vectored writes, while QUIC/WebSocket/WebTransport keep their own framing and message boundaries.
 
 ## 0.2.0 — initial public beta
 

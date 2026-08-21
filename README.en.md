@@ -138,7 +138,9 @@ let message = MessageRef::decode_borrowed(&packet)?;
 let text: &str = message.text;
 ~~~
 
-The resulting `&str` and `&[u8]` point directly into the input packet buffer, so the buffer must outlive the view. For example, `MessageRef.sender` has type `UserRef<'a>`, and its strings use the same buffer. Collection elements, enum payloads, `Map<K, V>`, and language-bridge objects are still decoded into owned values.
+The resulting `&str` and `&[u8]` point directly into the input packet buffer, so the buffer must outlive the view. For example, `MessageRef.sender` has type `UserRef<'a>`, while `roles`, `attachments`, and `metadata` are lazy borrowed views. Their iterators decode elements on demand without creating an owned `Vec`/`BTreeMap`; language-bridge objects remain owned values for now.
+
+For transport-level framing, `Encoder` also provides `write_vectored`: a header, packet, and trailer can be sent with one vectored write without an intermediate concatenation. The API is transport-neutral and works for TCP+TLS adapters; QUIC, WebSocket, and WebTransport can use the same packet buffer with their own message/frame boundaries.
 
 ### Flags and guard bits
 

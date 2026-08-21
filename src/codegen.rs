@@ -139,7 +139,13 @@ fn generate_struct(item: &Struct, output: &mut String) {
                 .find(|candidate| candidate.name == owner)
                 .map(|candidate| rust_type(&candidate.ty))
                 .unwrap_or_else(|| owner.to_owned());
-            output.push_str(&format!("        if self.{owner}.contains({owner_type}::{}) {{ self.{}.as_ref().ok_or(typikon::WireError::MalformedConstructor)?.encode(encoder)?; }}\n", const_name(bit), field.name));
+            if is_byte_vec(&field.ty) {
+                output.push_str(&format!("        if self.{owner}.contains({owner_type}::{}) {{ encoder.bytes(self.{}.as_ref().ok_or(typikon::WireError::MalformedConstructor)?)?; }}\n", const_name(bit), field.name));
+            } else {
+                output.push_str(&format!("        if self.{owner}.contains({owner_type}::{}) {{ self.{}.as_ref().ok_or(typikon::WireError::MalformedConstructor)?.encode(encoder)?; }}\n", const_name(bit), field.name));
+            }
+        } else if is_byte_vec(&field.ty) {
+            output.push_str(&format!("        encoder.bytes(&self.{})?;\n", field.name));
         } else {
             output.push_str(&format!("        self.{}.encode(encoder)?;\n", field.name));
         }
@@ -158,7 +164,18 @@ fn generate_struct(item: &Struct, output: &mut String) {
                 .find(|candidate| candidate.name == owner)
                 .map(|candidate| rust_type(&candidate.ty))
                 .unwrap_or_else(|| owner.to_owned());
-            output.push_str(&format!("        let {}: Option<{}> = if {}.contains({}::{}) {{ Some(typikon::WireCodec::decode(decoder)?) }} else {{ None }};\n", field.name, rust_type(&field.ty), owner, owner_type, const_name(bit)));
+            let decode = if is_byte_vec(&field.ty) {
+                "decoder.bytes()?".to_owned()
+            } else {
+                "typikon::WireCodec::decode(decoder)?".to_owned()
+            };
+            output.push_str(&format!("        let {}: Option<{}> = if {}.contains({}::{}) {{ Some({}) }} else {{ None }};\n", field.name, rust_type(&field.ty), owner, owner_type, const_name(bit), decode));
+        } else if is_byte_vec(&field.ty) {
+            output.push_str(&format!(
+                "        let {}: {} = decoder.bytes()?;\n",
+                field.name,
+                rust_type(&field.ty)
+            ));
         } else {
             output.push_str(&format!(
                 "        let {}: {} = typikon::WireCodec::decode(decoder)?;\n",
@@ -186,7 +203,13 @@ fn generate_struct(item: &Struct, output: &mut String) {
                 .find(|candidate| candidate.name == owner)
                 .map(|candidate| rust_type(&candidate.ty))
                 .unwrap_or_else(|| owner.to_owned());
-            output.push_str(&format!("        if self.{owner}.contains({owner_type}::{}) {{ if let Some(value) = &self.{} {{ size = size.saturating_add(typikon::WireCodec::encoded_len(value)); }} }}\n", const_name(bit), field.name));
+            if is_byte_vec(&field.ty) {
+                output.push_str(&format!("        if self.{owner}.contains({owner_type}::{}) {{ if let Some(value) = &self.{} {{ size = size.saturating_add(typikon::varint_len(value.len() as u64)).saturating_add(value.len()); }} }}\n", const_name(bit), field.name));
+            } else {
+                output.push_str(&format!("        if self.{owner}.contains({owner_type}::{}) {{ if let Some(value) = &self.{} {{ size = size.saturating_add(typikon::WireCodec::encoded_len(value)); }} }}\n", const_name(bit), field.name));
+            }
+        } else if is_byte_vec(&field.ty) {
+            output.push_str(&format!("        size = size.saturating_add(typikon::varint_len(self.{}.len() as u64)).saturating_add(self.{}.len());\n", field.name, field.name));
         } else {
             output.push_str(&format!(
                 "        size = size.saturating_add(typikon::WireCodec::encoded_len(&self.{}));\n",
@@ -270,7 +293,11 @@ fn generate_enum(item: &Enum, output: &mut String) {
                     .join(", ")
             ));
             for field in &variant.fields {
-                output.push_str(&format!(" {}.encode(encoder)?;", field.name));
+                if is_byte_vec(&field.ty) {
+                    output.push_str(&format!(" encoder.bytes({})?;", field.name));
+                } else {
+                    output.push_str(&format!(" {}.encode(encoder)?;", field.name));
+                }
             }
             output.push_str(" },\n");
         }
@@ -283,11 +310,19 @@ fn generate_enum(item: &Enum, output: &mut String) {
             variant.name.to_uppercase()
         ));
         for field in &variant.fields {
-            output.push_str(&format!(
-                " let {}: {} = typikon::WireCodec::decode(decoder)?;",
-                field.name,
-                rust_type(&field.ty)
-            ));
+            if is_byte_vec(&field.ty) {
+                output.push_str(&format!(
+                    " let {}: {} = decoder.bytes()?;",
+                    field.name,
+                    rust_type(&field.ty)
+                ));
+            } else {
+                output.push_str(&format!(
+                    " let {}: {} = typikon::WireCodec::decode(decoder)?;",
+                    field.name,
+                    rust_type(&field.ty)
+                ));
+            }
         }
         if variant.fields.is_empty() {
             output.push_str(&format!(" Ok(Self::{}) }},\n", variant.name));
@@ -322,10 +357,14 @@ fn generate_enum(item: &Enum, output: &mut String) {
                 .fields
                 .iter()
                 .map(|field| {
-                    format!(
-                        ".saturating_add(typikon::WireCodec::encoded_len({}))",
-                        field.name
-                    )
+                    if is_byte_vec(&field.ty) {
+                        format!(".saturating_add(typikon::varint_len({}.len() as u64)).saturating_add({}.len())", field.name, field.name)
+                    } else {
+                        format!(
+                            ".saturating_add(typikon::WireCodec::encoded_len({}))",
+                            field.name
+                        )
+                    }
                 })
                 .collect::<String>();
             output.push_str(&format!(
@@ -415,6 +454,10 @@ fn rust_type(ty: &Type) -> String {
     }
 }
 
+fn is_byte_vec(ty: &Type) -> bool {
+    matches!(ty, Type::Vec(item) if matches!(item.as_ref(), Type::Primitive(name) if name == "u8"))
+}
+
 fn const_name(name: &str) -> String {
     let mut result = String::new();
     for (index, character) in name.chars().enumerate() {
@@ -467,6 +510,19 @@ mod tests {
         assert!(generated.contains("New {"));
         assert!(generated.contains("std::collections::BTreeMap<String, u64>"));
         assert!(generated.contains("Deleted,"));
+    }
+
+    #[test]
+    fn generates_bulk_codec_for_byte_vectors() {
+        let schema = parse_schema(
+            "#[version(1)] struct Blob { data: Vec<u8>, } enum Event { Upload { data: Vec<u8>, }, Empty, }",
+        )
+        .unwrap();
+        let generated = generate_rust(&schema);
+        assert!(generated.contains("encoder.bytes(&self.data)?;"));
+        assert!(generated.contains("let data: Vec<u8> = decoder.bytes()?;"));
+        assert!(generated.contains("encoder.bytes(data)?;"));
+        assert!(generated.contains("varint_len(self.data.len() as u64)"));
     }
 
     #[test]

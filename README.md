@@ -129,6 +129,17 @@ struct Attachment {
 
 `Vec<T>` может быть вложенным: `Vec<Vec<u8>>`, `Map<String, Vec<Message>>`. Ключ `Map<K, V>` должен быть primitive-типом, кроме `f32` и `f64`; пары кодируются в отсортированном порядке.
 
+## Zero-copy decode — beta
+
+Generated Rust layer создаёт borrowed-view для структур с прямыми полями `String` и `Vec<u8>`:
+
+~~~rust
+let message = MessageRef::decode_borrowed(&packet)?;
+let text: &str = message.text;
+~~~
+
+`&str` и `&[u8]` указывают прямо внутрь входного packet buffer, поэтому buffer обязан жить дольше view. Текущая первая фаза zero-copy охватывает только прямые строковые и byte-поля. Вложенные named structures, обычные `Vec<T>`, `Map<K, V>` и объекты language bridge пока декодируются как owned values.
+
 ### Flags и Guard-биты
 
 Flags — это enum с атрибутом `#[flags(u8)]`, `#[flags(u16)]`, `#[flags(u32)]`, `#[flags(u64)]` или `#[flags(u128)]`. Значение после `=` — номер бита от `0` до последнего бита underlying-типа:
@@ -273,7 +284,7 @@ Typikon — собственная schema-driven реализация бинар
 
 ## Что реально проверено
 
-Текущая Rust-проверка включает **45 тестов: 42 unit и 3 integration**. Покрыты parser и semantic validation, code generation, воспроизводимость public schema, CLI, Layer negotiation, C-ID, round-trip primitive/collection wire-кодирования, лимиты, malformed/truncated input, duplicate Map keys, canonical VarInt, borrowed decode и случайные parser/wire inputs.
+Текущая Rust-проверка включает **46 тестов: 43 unit и 3 integration**. Покрыты parser и semantic validation, code generation, воспроизводимость public schema, CLI, Layer negotiation, C-ID, round-trip primitive/collection wire-кодирования, лимиты, malformed/truncated input, duplicate Map keys, canonical VarInt, borrowed decode и случайные parser/wire inputs.
 
 Воспроизводимый benchmark запускается командой `cargo bench --bench wire`. Он отдельно измеряет encode, owned/borrowed decode и 64 KiB binary payload; результат зависит от CPU и профиля сборки и не считается сетевым benchmark.
 
@@ -289,7 +300,10 @@ bindings/python/      PyO3 binding
 bindings/go/          cgo binding и native crate
 bindings/typescript/  Node-API binding и TS facade
 tests/                CLI, artifact и cross-language checks
+CHANGELOG.md           история изменений с initial beta
 ~~~
+
+История изменений и текущие ограничения beta ведутся в [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Лицензия
 

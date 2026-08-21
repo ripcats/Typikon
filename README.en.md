@@ -129,6 +129,17 @@ Supported types:
 
 `Vec<T>` can be nested: `Vec<Vec<u8>>`, `Map<String, Vec<Message>>`. A `Map<K, V>` key must be primitive, except `f32` and `f64`; pairs are encoded in sorted order.
 
+## Zero-copy decoding — beta
+
+The generated Rust layer emits borrowed views for structures with direct `String` and `Vec<u8>` fields:
+
+~~~rust
+let message = MessageRef::decode_borrowed(&packet)?;
+let text: &str = message.text;
+~~~
+
+The resulting `&str` and `&[u8]` point directly into the input packet buffer, so the buffer must outlive the view. This first zero-copy phase covers direct string and byte fields only. Nested named structures, general `Vec<T>`, `Map<K, V>`, and language-bridge objects are still decoded into owned values.
+
 ### Flags and guard bits
 
 Flags are enums annotated with `#[flags(u8)]`, `#[flags(u16)]`, `#[flags(u32)]`, `#[flags(u64)]`, or `#[flags(u128)]`. The value after `=` is a bit index:
@@ -273,7 +284,7 @@ Transport and application logic intentionally remain a separate layer. Typikon f
 
 ## What is actually tested
 
-The current Rust suite contains **45 tests: 42 unit tests and 3 integration tests**. It covers parsing and semantic validation, code generation, reproducible public schemas, the CLI, Layer negotiation, C-IDs, primitive/collection wire round-trips, limits, malformed/truncated input, duplicate map keys, canonical VarInt, borrowed decoding, and randomized parser/wire inputs.
+The current Rust suite contains **46 tests: 43 unit tests and 3 integration tests**. It covers parsing and semantic validation, code generation, reproducible public schemas, the CLI, Layer negotiation, C-IDs, primitive/collection wire round-trips, limits, malformed/truncated input, duplicate map keys, canonical VarInt, borrowed decoding, and randomized parser/wire inputs.
 
 A reproducible benchmark is available through `cargo bench --bench wire`. It measures encoding, owned/borrowed decoding, and a 64 KiB binary payload separately; results depend on the CPU and build profile and are not a network benchmark.
 
@@ -289,7 +300,10 @@ bindings/python/      PyO3 binding
 bindings/go/          cgo binding and native crate
 bindings/typescript/  Node-API binding and TS facade
 tests/                CLI, artifact, and cross-language checks
+CHANGELOG.md           history since the initial beta
 ~~~
+
+Release history and current beta limitations are tracked in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## License
 

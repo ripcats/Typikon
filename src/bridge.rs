@@ -567,10 +567,33 @@ fn generate_go_lazy_view_enum(item: &crate::Enum, schema: &Schema, output: &mut 
             if let Some((_, collection_field)) = collection {
                 let collection_name = go_lazy_enum_field_name(name, &variant.name, &field.name);
                 let item_name = go_lazy_enum_item_name(name, &variant.name, &field.name);
-                output.push_str(&format!(
-                    "{{var n uint64;n,e=d.varint();if e!=nil{{return nil,e}};var c int;c,e=count(n);if e!=nil{{return nil,e}};var start=d.p;for i:=0;i<c;i++{{_,e={item_name}(d);if e!=nil{{return nil,e}}}};v.{}={collection_name}{{wire:d.b,start:start,count:c}};}};",
-                    pascal_case(&collection_field.name)
-                ));
+                if let Type::Map(key, _) = &collection_field.ty {
+                    let entry_ty = format!(
+                        "{}{}{}Entry",
+                        name,
+                        pascal_case(&variant.name),
+                        pascal_case(&collection_field.name)
+                    );
+                    let key_check = if matches!(key.as_ref(), Type::Primitive(name) if name == "String")
+                        || is_bytes_type(key)
+                    {
+                        "if i>0&&wireBytesCompare(previousKey,entry.Key)>=0{return nil,fmt.Errorf(\"map keys are not strictly sorted\")};"
+                    } else {
+                        "if i>0&&previousKey>=entry.Key{return nil,fmt.Errorf(\"map keys are not strictly sorted\")};"
+                    };
+                    output.push_str(&format!(
+                        "{{var n uint64;n,e=d.varint();if e!=nil{{return nil,e}};var c int;c,e=count(n);if e!=nil{{return nil,e}};var start=d.p;var previousKey {};for i:=0;i<c;i++{{var entry {};entry,e={item_name}(d);if e!=nil{{return nil,e}};{}previousKey=entry.Key}};v.{}={collection_name}{{wire:d.b,start:start,count:c}};}};",
+                        go_lazy_view_type(key, schema),
+                        entry_ty,
+                        key_check,
+                        pascal_case(&collection_field.name)
+                    ));
+                } else {
+                    output.push_str(&format!(
+                        "{{var n uint64;n,e=d.varint();if e!=nil{{return nil,e}};var c int;c,e=count(n);if e!=nil{{return nil,e}};var start=d.p;for i:=0;i<c;i++{{_,e={item_name}(d);if e!=nil{{return nil,e}}}};v.{}={collection_name}{{wire:d.b,start:start,count:c}};}};",
+                        pascal_case(&collection_field.name)
+                    ));
+                }
             } else {
                 go_decode_lazy_view_type(
                     &field.ty,
@@ -2039,7 +2062,7 @@ mod tests {
     #[test]
     fn generated_go_and_typescript_views_cover_borrowable_fields() {
         let schema = parse_schema(
-            "#[version(10)] struct User { id: u64, name: String, tags: Vec<String>, } struct Attachment { id: u64, name: String, } enum Event { Created { user: User }, } enum Batch { Items { values: Vec<String> }, }",
+            "#[version(10)] struct User { id: u64, name: String, tags: Vec<String>, } struct Attachment { id: u64, name: String, } enum Event { Created { user: User }, } enum Batch { Items { values: Vec<String>, entries: Map<String, String> }, }",
         )
         .unwrap();
         let go = generate_go_binding(&schema, "chat-10.h");
@@ -2061,6 +2084,8 @@ mod tests {
         assert!(typescript.contains("itemsvaluesCount"));
         assert!(go.contains("func BorrowBatchLazy"));
         assert!(go.contains("BatchItemsValuesLazyView"));
+        assert!(go.contains("BatchItemsEntriesEntry"));
+        assert!(go.contains("entry.Key)>=0"));
     }
 
     #[test]

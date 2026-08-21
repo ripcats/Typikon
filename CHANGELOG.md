@@ -12,6 +12,7 @@ All notable changes to Typikon since its initial public beta are documented here
 - Lazy `BorrowedVec` and `BorrowedMap` views now cover repeated fields, nested structures, and map entries without materializing owned collections; enum payloads also have generated borrowed views.
 - Added transport-neutral `Encoder::write_vectored` for sending framing segments around a packet without an intermediate concatenation.
 - The checked-in benchmark now includes a collection-heavy messenger path with owned decode, borrowed decode, and lazy iteration measurements.
+- Added a reproducible Typikon/FlatBuffers/TL comparison harness with wire size, encode/decode, iteration, and allocation metrics.
 - Reusable encoder buffers, exact generated size hints, borrowed string/byte decoding, and binary TypeScript bridge entry points.
 - Reproducible `cargo bench --bench wire` benchmark for message and 64 KiB payload paths.
 - Python, TypeScript, and Go golden wire round-trip checks.

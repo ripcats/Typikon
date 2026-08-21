@@ -11,7 +11,15 @@ blake3 = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+[dev-dependencies]
+flatbuffers = "2"
+
 [[bench]]
 name = "wire"
+harness = false
+test = false
+
+[[bench]]
+name = "compare"
 harness = false
 test = false

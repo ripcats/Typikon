@@ -1,0 +1,17 @@
+namespace TypikonBench;
+
+table Attachment {
+  name:string;
+  mime:string;
+  size:ulong;
+}
+
+table CollectionMessage {
+  id:ulong;
+  roles:[string];
+  attachments:[Attachment];
+  metadata_keys:[string];
+  metadata_values:[string];
+}
+
+root_type CollectionMessage;

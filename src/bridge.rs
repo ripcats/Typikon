@@ -240,6 +240,79 @@ fn go_lazy_item_name(parent: &str, field: &str) -> String {
     format!("read{}{}LazyItem", parent, pascal_case(field))
 }
 
+fn go_has_lazy_view(name: &str, schema: &Schema) -> bool {
+    schema
+        .items
+        .iter()
+        .find_map(|item| match item {
+            Item::Struct(st) if st.name == name => Some(st.fields.iter().any(|field| {
+                matches!(field.ty, Type::Vec(_) | Type::Map(_, _)) && !is_bytes_type(&field.ty)
+            })),
+            _ => None,
+        })
+        .unwrap_or(false)
+}
+
+fn go_lazy_view_type(ty: &Type, schema: &Schema) -> String {
+    match ty {
+        Type::Primitive(name)
+            if schema.items.iter().any(|item| item_name(item) == name)
+                && go_has_lazy_view(name, schema) =>
+        {
+            format!("{}LazyView", name)
+        }
+        Type::Vec(item) => format!("[]{}", go_lazy_view_type(item, schema)),
+        Type::Map(key, value) => format!(
+            "[]struct {{ Key {}; Value {} }}",
+            go_lazy_view_type(key, schema),
+            go_lazy_view_type(value, schema)
+        ),
+        _ => go_view_type(ty, schema),
+    }
+}
+
+fn go_decode_lazy_view_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut String) {
+    if is_bytes_type(ty) || matches!(ty, Type::Primitive(name) if name == "String") {
+        out.push_str(&format!("{lhs},e=d.bytes();if e!=nil{{return v,e}};"));
+        return;
+    }
+    match ty {
+        Type::Primitive(name) if schema.items.iter().any(|item| item_name(item) == name) => {
+            if go_has_lazy_view(name, schema) {
+                out.push_str(&format!(
+                    "{lhs},e=read{}LazyView(d);if e!=nil{{return v,e}};",
+                    name
+                ));
+            } else if go_named_view(name, schema) {
+                out.push_str(&format!(
+                    "{lhs},e=read{}View(d);if e!=nil{{return v,e}};",
+                    name
+                ));
+            } else {
+                out.push_str(&format!(
+                    "{lhs},e=decode_{}(d);if e!=nil{{return v,e}};",
+                    snake_case(name)
+                ));
+            }
+        }
+        Type::Primitive(name) => out.push_str(&format!(
+            "{lhs},e=d.{}();if e!=nil{{return v,e}};",
+            go_wire_method(name)
+        )),
+        Type::Vec(item) => {
+            out.push_str(&format!("{{var n uint64;n,e=d.varint();if e!=nil{{return v,e}};var c int;c,e=count(n);if e!=nil{{return v,e}};{lhs}=make({},c);for i:=range {lhs}{{", go_lazy_view_type(ty, schema)));
+            go_decode_lazy_view_type(item, &format!("{lhs}[i]"), schema, out);
+            out.push_str("}};");
+        }
+        Type::Map(key, value) => {
+            out.push_str(&format!("{{var n uint64;n,e=d.varint();if e!=nil{{return v,e}};var c int;c,e=count(n);if e!=nil{{return v,e}};{lhs}=make({},c);for i:=range {lhs}{{", go_lazy_view_type(ty, schema)));
+            go_decode_lazy_view_type(key, &format!("{lhs}[i].Key"), schema, out);
+            go_decode_lazy_view_type(value, &format!("{lhs}[i].Value"), schema, out);
+            out.push_str("}};");
+        }
+    }
+}
+
 fn generate_go_lazy_view_struct(item: &crate::Struct, schema: &Schema, output: &mut String) {
     let collections = item
         .fields
@@ -256,7 +329,7 @@ fn generate_go_lazy_view_struct(item: &crate::Struct, schema: &Schema, output: &
         let collection_name = go_lazy_field_name(name, &field.name);
         let item_name = go_lazy_item_name(name, &field.name);
         let (item_ty, decode_ty) = match &field.ty {
-            Type::Vec(ty) => (go_view_type(ty, schema), ty.as_ref().clone()),
+            Type::Vec(ty) => (go_lazy_view_type(ty, schema), ty.as_ref().clone()),
             Type::Map(key, value) => (
                 format!("{}{}Entry", name, pascal_case(&field.name)),
                 Type::Map(key.clone(), value.clone()),
@@ -268,8 +341,8 @@ fn generate_go_lazy_view_struct(item: &crate::Struct, schema: &Schema, output: &
                 output.push_str(&format!(
                     "type {} struct{{ Key {}; Value {} }}\n",
                     item_ty,
-                    go_view_type(key, schema),
-                    go_view_type(value, schema)
+                    go_lazy_view_type(key, schema),
+                    go_lazy_view_type(value, schema)
                 ));
             }
         }
@@ -279,10 +352,10 @@ fn generate_go_lazy_view_struct(item: &crate::Struct, schema: &Schema, output: &
         ));
         match decode_ty {
             Type::Map(key, value) => {
-                go_decode_view_type(&key, &format!("v.Key"), schema, output);
-                go_decode_view_type(&value, &format!("v.Value"), schema, output);
+                go_decode_lazy_view_type(&key, "v.Key", schema, output);
+                go_decode_lazy_view_type(&value, "v.Value", schema, output);
             }
-            ty => go_decode_view_type(&ty, "v", schema, output),
+            ty => go_decode_lazy_view_type(&ty, "v", schema, output),
         }
         output.push_str("return v,e}\n");
         output.push_str(&format!("func (v {collection_name}) At(i int) ({item_ty},bool) {{ var zero {item_ty}; if i<0||i>=v.count{{return zero,false}}; d:=wireDecoder{{b:v.wire,p:v.start}}; var value {item_ty}; var e error; for n:=0;n<=i;n++{{value,e={item_name}(&d);if e!=nil{{return zero,false}}}}; return value,true }}\n"));
@@ -295,7 +368,7 @@ fn generate_go_lazy_view_struct(item: &crate::Struct, schema: &Schema, output: &
         {
             go_lazy_field_name(name, &field.name)
         } else {
-            go_view_type(&field.ty, schema)
+            go_lazy_view_type(&field.ty, schema)
         };
         output.push_str(&format!(" {} {};", pascal_case(&field.name), ty));
     }
@@ -325,13 +398,13 @@ fn generate_go_lazy_view_struct(item: &crate::Struct, schema: &Schema, output: &
             if collection {
                 output.push_str(&decode);
             } else {
-                go_decode_view_type(&field.ty, &lhs, schema, output);
+                go_decode_lazy_view_type(&field.ty, &lhs, schema, output);
             }
             output.push_str("};");
         } else if collection {
             output.push_str(&decode);
         } else {
-            go_decode_view_type(&field.ty, &lhs, schema, output);
+            go_decode_lazy_view_type(&field.ty, &lhs, schema, output);
         }
     }
     output.push_str(&format!("return v,e}}\nfunc Borrow{name}Lazy(b []byte) ({name}LazyView,error){{d:=wireDecoder{{b:b}};v,e:=read{name}LazyView(&d);if e==nil{{e=d.done()}};return v,e}}\n\n"));

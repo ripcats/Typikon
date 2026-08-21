@@ -986,7 +986,7 @@ func (v MessageMetadataLazyView) At(i int) (MapEntryView, bool) {
 
 type MessageLazyView struct {
 	id, chatID  uint64
-	sender      UserView
+	sender      UserLazyView
 	text        []byte
 	attachments MessageAttachmentsLazyView
 	metadata    MessageMetadataLazyView
@@ -994,7 +994,7 @@ type MessageLazyView struct {
 
 func (v MessageLazyView) ID() uint64                              { return v.id }
 func (v MessageLazyView) ChatID() uint64                          { return v.chatID }
-func (v MessageLazyView) Sender() UserView                        { return v.sender }
+func (v MessageLazyView) Sender() UserLazyView                    { return v.sender }
 func (v MessageLazyView) TextBytes() []byte                       { return v.text }
 func (v MessageLazyView) AttachmentsLen() int                     { return v.attachments.Len() }
 func (v MessageLazyView) Attachment(i int) (AttachmentView, bool) { return v.attachments.At(i) }
@@ -1013,7 +1013,7 @@ func readMessageLazyView(d *wireDecoder) (MessageLazyView, error) {
 	if v.chatID, e = d.u64(); e != nil {
 		return v, e
 	}
-	if v.sender, e = readUserView(d); e != nil {
+	if v.sender, e = readUserLazyView(d); e != nil {
 		return v, e
 	}
 	if v.text, e = d.bytes(); e != nil {

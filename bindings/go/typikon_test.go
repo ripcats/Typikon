@@ -96,7 +96,7 @@ func TestUserBorrowedViewAliasesPacket(t *testing.T) {
 }
 
 func TestBorrowedViewsCoverNestedAndEnumPayloads(t *testing.T) {
-	wire, err := EncodeMessage(Message{Id: 1, ChatId: 2, Sender: User{Id: 7, Username: "ada", DisplayName: "Ada", Presence: Presence("Online")}, Text: "hello", Attachments: []Attachment{{Id: 3, Name: "a.txt", MimeType: "text/plain", Size: 5}}, Metadata: map[string]string{"k": "v"}})
+	wire, err := EncodeMessage(Message{Id: 1, ChatId: 2, Sender: User{Id: 7, Username: "ada", DisplayName: "Ada", Presence: Presence("Online"), Roles: []string{"admin"}}, Text: "hello", Attachments: []Attachment{{Id: 3, Name: "a.txt", MimeType: "text/plain", Size: 5}}, Metadata: map[string]string{"k": "v"}})
 	if err != nil {
 		t.Fatalf("EncodeMessage: %v", err)
 	}
@@ -122,6 +122,9 @@ func TestBorrowedViewsCoverNestedAndEnumPayloads(t *testing.T) {
 	lazy, err := BorrowMessageLazy(wire)
 	if err != nil {
 		t.Fatalf("BorrowMessageLazy: %v", err)
+	}
+	if lazy.Sender().RolesLen() != 1 {
+		t.Fatalf("nested lazy roles were materialized or lost")
 	}
 	attachment, ok := lazy.Attachment(0)
 	if !ok || string(attachment.NameBytes()) != "a.txt" {

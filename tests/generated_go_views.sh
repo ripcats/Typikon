@@ -52,6 +52,13 @@ func TestGeneratedBorrowedViews(t *testing.T) {
 	if lazy.Attachments.Len() != 1 || lazy.Metadata.Len() != 1 {
 		t.Fatalf("unexpected lazy collection lengths")
 	}
+	if lazy.Sender.Roles.Len() != 1 {
+		t.Fatalf("nested lazy roles were materialized or lost")
+	}
+	lazyRole, ok := lazy.Sender.Roles.At(0)
+	if !ok || string(lazyRole) != "admin" {
+		t.Fatalf("unexpected nested lazy role: %q, %v", lazyRole, ok)
+	}
 	lazyAttachment, ok := lazy.Attachments.At(0)
 	if !ok || string(lazyAttachment.Name) != "a.txt" {
 		t.Fatalf("unexpected lazy attachment: %#v, %v", lazyAttachment, ok)

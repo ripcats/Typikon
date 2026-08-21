@@ -29,6 +29,7 @@ All notable changes to Typikon since its initial public beta are documented here
 - Added generated Go `*LazyView` and TypeScript `decode*LazyView` collection APIs that rescan packet-backed ranges instead of allocating element metadata.
 - Updated the checked-in Go Layer 10 artifact with lazy views and Map ordering/duplicate-key validation in borrowed and lazy paths.
 - Added Map ordering and duplicate-key rejection checks to generated Go and TypeScript borrowed/lazy views.
+- Propagated Go lazy views through nested named structs, so nested collections remain packet-backed instead of falling back to materialized views.
 
 ### Changed
 

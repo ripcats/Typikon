@@ -5,6 +5,9 @@
   "description": "TypeScript bridge for the Typikon Rust core",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "scripts": { "build": "tsc" },
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc --noEmit"
+  },
   "devDependencies": { "@types/node": "^22.0.0", "typescript": "^5.0.0" }
 }

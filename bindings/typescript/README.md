@@ -11,4 +11,4 @@ npm ci
 npm run build
 ```
 
-The native module exposes ABI/Layer negotiation and `encodeJson(layer, typeName, input)` / `decodeJson(...)`. Unknown types, unsupported Layers, malformed JSON, and invalid wire bytes become Node errors.
+The native module exposes ABI/Layer negotiation, `encodeJson(layer, typeName, input)` / `decodeJson(...)`, and `validateBinary(layer, typeName, input)`. `validateBinary` runs the generated checked borrowed decoder without materializing an owned object; the caller retains the original `Uint8Array`. Unknown types, unsupported Layers, malformed JSON, and invalid wire bytes become Node errors.

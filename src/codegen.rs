@@ -91,6 +91,24 @@ pub fn generate_public_schema(schema: &Schema) -> String {
     output
 }
 
+pub(crate) fn borrowed_view_name(item: &Item, schema: &Schema) -> Option<String> {
+    match item {
+        Item::Struct(item) if struct_needs_borrowed(&item.name, schema, &mut Vec::new()) => {
+            Some(format!("{}Ref", item.name))
+        }
+        Item::Enum(item)
+            if !item
+                .variants
+                .iter()
+                .all(|variant| variant.fields.is_empty())
+                && enum_needs_borrowed(&item.name, schema, &mut Vec::new()) =>
+        {
+            Some(format!("{}Ref", item.name))
+        }
+        _ => None,
+    }
+}
+
 fn schema_type(ty: &Type) -> String {
     match ty {
         Type::Primitive(name) => name.clone(),

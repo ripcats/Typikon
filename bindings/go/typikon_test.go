@@ -54,3 +54,17 @@ func TestUserDecodeRejectsInvalidWire(t *testing.T) {
 		t.Fatal("invalid wire unexpectedly decoded")
 	}
 }
+
+func TestUserBorrowedValidation(t *testing.T) {
+	want := User{Id: 7, Username: "ada", DisplayName: "Ada", Presence: Presence("Online"), Roles: []string{}}
+	wire, err := EncodeUser(want)
+	if err != nil {
+		t.Fatalf("EncodeUser: %v", err)
+	}
+	if err := ValidateUser(wire); err != nil {
+		t.Fatalf("ValidateUser: %v", err)
+	}
+	if err := ValidateUser([]byte{0xff}); err == nil {
+		t.Fatal("invalid wire unexpectedly validated")
+	}
+}

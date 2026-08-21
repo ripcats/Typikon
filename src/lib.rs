@@ -35,7 +35,10 @@ pub use layer::{LayerSupport, LayerVersionNotSupported};
 pub use limits::{MAX_NESTING_DEPTH, MAX_PACKET_SIZE};
 pub use parser::parse_schema;
 pub use validate::validate;
-pub use wire::{BorrowedWireCodec, Decoder, Encoder, WireCodec, WireError, varint_len};
+pub use wire::{
+    BorrowedMap, BorrowedMapIter, BorrowedVec, BorrowedVecIter, BorrowedWireCodec, Decoder,
+    Encoder, WireCodec, WireError, varint_len,
+};
 
 /// Stable ABI version exposed to language bindings.
 pub fn ffi_abi_version() -> u16 {

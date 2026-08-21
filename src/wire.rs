@@ -1,6 +1,7 @@
 //! Small, allocation-aware wire primitives used by generated codecs.
 
 use std::collections::BTreeMap;
+use std::marker::PhantomData;
 
 const MAX_VARINT_BYTES: usize = 10;
 const DEFAULT_ENCODER_CAPACITY: usize = 128;
@@ -35,6 +36,10 @@ pub trait WireCodec: Sized {
 
 pub trait BorrowedWireCodec<'a>: Sized {
     fn decode_borrowed(decoder: &mut Decoder<'a>) -> Result<Self, WireError>;
+
+    fn skip_borrowed(decoder: &mut Decoder<'a>) -> Result<(), WireError> {
+        Self::decode_borrowed(decoder).map(|_| ())
+    }
 }
 
 impl<'a> BorrowedWireCodec<'a> for &'a str {
@@ -46,6 +51,160 @@ impl<'a> BorrowedWireCodec<'a> for &'a str {
 impl<'a> BorrowedWireCodec<'a> for &'a [u8] {
     fn decode_borrowed(decoder: &mut Decoder<'a>) -> Result<Self, WireError> {
         decoder.bytes_borrowed()
+    }
+}
+
+impl<'a, T: WireCodec> BorrowedWireCodec<'a> for T {
+    fn decode_borrowed(decoder: &mut Decoder<'a>) -> Result<Self, WireError> {
+        T::decode(decoder)
+    }
+}
+
+pub struct BorrowedVec<'a, T> {
+    bytes: &'a [u8],
+    count: usize,
+    max_size: usize,
+    marker: PhantomData<T>,
+}
+
+impl<'a, T> std::fmt::Debug for BorrowedVec<'a, T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("BorrowedVec")
+            .field("count", &self.count)
+            .finish()
+    }
+}
+
+impl<'a, T> Clone for BorrowedVec<'a, T> {
+    fn clone(&self) -> Self {
+        Self {
+            bytes: self.bytes,
+            count: self.count,
+            max_size: self.max_size,
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<'a, T> PartialEq for BorrowedVec<'a, T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.bytes == other.bytes && self.count == other.count
+    }
+}
+
+impl<'a, T> BorrowedVec<'a, T> {
+    pub fn len(&self) -> usize {
+        self.count
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+}
+
+impl<'a, T: BorrowedWireCodec<'a>> BorrowedVec<'a, T> {
+    pub fn iter(&self) -> BorrowedVecIter<'a, T> {
+        BorrowedVecIter {
+            decoder: Decoder::new(self.bytes, self.max_size).expect("validated view range"),
+            remaining: self.count,
+            marker: PhantomData,
+        }
+    }
+}
+
+pub struct BorrowedVecIter<'a, T> {
+    decoder: Decoder<'a>,
+    remaining: usize,
+    marker: PhantomData<T>,
+}
+
+impl<'a, T: BorrowedWireCodec<'a>> Iterator for BorrowedVecIter<'a, T> {
+    type Item = Result<T, WireError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.remaining == 0 {
+            return None;
+        }
+        self.remaining -= 1;
+        Some(T::decode_borrowed(&mut self.decoder))
+    }
+}
+
+pub struct BorrowedMap<'a, K, V> {
+    bytes: &'a [u8],
+    count: usize,
+    max_size: usize,
+    marker: PhantomData<(K, V)>,
+}
+
+impl<'a, K, V> std::fmt::Debug for BorrowedMap<'a, K, V> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("BorrowedMap")
+            .field("count", &self.count)
+            .finish()
+    }
+}
+
+impl<'a, K, V> Clone for BorrowedMap<'a, K, V> {
+    fn clone(&self) -> Self {
+        Self {
+            bytes: self.bytes,
+            count: self.count,
+            max_size: self.max_size,
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<'a, K, V> PartialEq for BorrowedMap<'a, K, V> {
+    fn eq(&self, other: &Self) -> bool {
+        self.bytes == other.bytes && self.count == other.count
+    }
+}
+
+impl<'a, K, V> BorrowedMap<'a, K, V> {
+    pub fn len(&self) -> usize {
+        self.count
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+}
+
+impl<'a, K: BorrowedWireCodec<'a>, V: BorrowedWireCodec<'a>> BorrowedMap<'a, K, V> {
+    pub fn iter(&self) -> BorrowedMapIter<'a, K, V> {
+        BorrowedMapIter {
+            decoder: Decoder::new(self.bytes, self.max_size).expect("validated view range"),
+            remaining: self.count,
+            marker: PhantomData,
+        }
+    }
+}
+
+pub struct BorrowedMapIter<'a, K, V> {
+    decoder: Decoder<'a>,
+    remaining: usize,
+    marker: PhantomData<(K, V)>,
+}
+
+impl<'a, K: BorrowedWireCodec<'a>, V: BorrowedWireCodec<'a>> Iterator
+    for BorrowedMapIter<'a, K, V>
+{
+    type Item = Result<(K, V), WireError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.remaining == 0 {
+            return None;
+        }
+        self.remaining -= 1;
+        Some((|| {
+            let key = K::decode_borrowed(&mut self.decoder)?;
+            let value = V::decode_borrowed(&mut self.decoder)?;
+            Ok((key, value))
+        })())
     }
 }
 
@@ -287,6 +446,45 @@ impl<'a> Decoder<'a> {
     }
     pub fn string_borrowed(&mut self) -> Result<&'a str, WireError> {
         std::str::from_utf8(self.bytes_borrowed()?).map_err(|_| WireError::InvalidUtf8)
+    }
+    pub fn borrowed_vec<T: BorrowedWireCodec<'a>>(
+        &mut self,
+    ) -> Result<BorrowedVec<'a, T>, WireError> {
+        let count = usize::try_from(self.varint()?).map_err(|_| WireError::IntegerOverflow)?;
+        if count > self.max_size {
+            return Err(WireError::PacketTooLarge);
+        }
+        let start = self.position;
+        for _ in 0..count {
+            T::skip_borrowed(self)?;
+        }
+        let bytes = &self.bytes[start..self.position];
+        Ok(BorrowedVec {
+            bytes,
+            count,
+            max_size: self.max_size,
+            marker: PhantomData,
+        })
+    }
+    pub fn borrowed_map<K: BorrowedWireCodec<'a>, V: BorrowedWireCodec<'a>>(
+        &mut self,
+    ) -> Result<BorrowedMap<'a, K, V>, WireError> {
+        let count = usize::try_from(self.varint()?).map_err(|_| WireError::IntegerOverflow)?;
+        if count > self.max_size {
+            return Err(WireError::PacketTooLarge);
+        }
+        let start = self.position;
+        for _ in 0..count {
+            K::skip_borrowed(self)?;
+            V::skip_borrowed(self)?;
+        }
+        let bytes = &self.bytes[start..self.position];
+        Ok(BorrowedMap {
+            bytes,
+            count,
+            max_size: self.max_size,
+            marker: PhantomData,
+        })
     }
     pub fn value<T: WireCodec>(&mut self) -> Result<T, WireError> {
         T::decode(self)
@@ -599,6 +797,37 @@ mod tests {
         assert_eq!(text, "text");
         assert!(bytes[payload.as_ptr() as usize - bytes.as_ptr() as usize..].starts_with(payload));
         assert!(decoder.is_finished());
+    }
+
+    #[test]
+    fn borrowed_collections_iterate_without_copying_elements() {
+        let mut encoder = Encoder::new(LIMIT);
+        encoder.varint(2).unwrap();
+        encoder.bytes(b"first").unwrap();
+        encoder.bytes(b"second").unwrap();
+        let packet = encoder.finish().unwrap();
+        let mut decoder = Decoder::new(&packet, LIMIT).unwrap();
+        let values: BorrowedVec<'_, &'_ [u8]> = decoder.borrowed_vec().unwrap();
+        let first = values.iter().next().unwrap().unwrap();
+        let second = values.iter().nth(1).unwrap().unwrap();
+        assert_eq!(values.len(), 2);
+        assert_eq!(first, b"first");
+        assert_eq!(second, b"second");
+        let start = packet.as_ptr() as usize;
+        let end = start + packet.len();
+        assert!((start..end).contains(&(first.as_ptr() as usize)));
+        assert!((start..end).contains(&(second.as_ptr() as usize)));
+        assert!(decoder.is_finished());
+    }
+
+    #[test]
+    fn borrowed_collection_scan_rejects_truncated_items() {
+        let packet = [1, 3, b'x'];
+        let mut decoder = Decoder::new(&packet, LIMIT).unwrap();
+        assert!(matches!(
+            decoder.borrowed_vec::<&str>(),
+            Err(WireError::UnexpectedEof)
+        ));
     }
 
     #[test]

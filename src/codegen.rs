@@ -511,14 +511,7 @@ fn rust_field_type(field: &Field) -> String {
 }
 
 fn borrowed_rust_field_type(field: &Field, schema: &Schema) -> String {
-    let ty = match &field.ty {
-        Type::Primitive(name) if name == "String" => "&'a str".into(),
-        ty if is_byte_vec(ty) => "&'a [u8]".into(),
-        Type::Primitive(name) if struct_needs_borrowed(name, schema, &mut Vec::new()) => {
-            format!("{name}Ref<'a>")
-        }
-        ty => rust_type(ty),
-    };
+    let ty = borrowed_type(&field.ty, schema);
     if field.guard.is_some() {
         format!("Option<{ty}>")
     } else {
@@ -530,10 +523,29 @@ fn borrowed_decode_expression(ty: &Type, schema: &Schema) -> String {
     match ty {
         Type::Primitive(name) if name == "String" => "decoder.string_borrowed()?".into(),
         ty if is_byte_vec(ty) => "decoder.bytes_borrowed()?".into(),
+        Type::Vec(_) => "decoder.borrowed_vec()?".into(),
+        Type::Map(_, _) => "decoder.borrowed_map()?".into(),
         Type::Primitive(name) if struct_needs_borrowed(name, schema, &mut Vec::new()) => {
             "typikon::BorrowedWireCodec::decode_borrowed(decoder)?".into()
         }
         _ => "typikon::WireCodec::decode(decoder)?".into(),
+    }
+}
+
+fn borrowed_type(ty: &Type, schema: &Schema) -> String {
+    match ty {
+        Type::Primitive(name) if name == "String" => "&'a str".into(),
+        ty if is_byte_vec(ty) => "&'a [u8]".into(),
+        Type::Primitive(name) if struct_needs_borrowed(name, schema, &mut Vec::new()) => {
+            format!("{name}Ref<'a>")
+        }
+        Type::Vec(item) => format!("typikon::BorrowedVec<'a, {}>", borrowed_type(item, schema)),
+        Type::Map(key, value) => format!(
+            "typikon::BorrowedMap<'a, {}, {}>",
+            borrowed_type(key, schema),
+            borrowed_type(value, schema)
+        ),
+        _ => rust_type(ty),
     }
 }
 
@@ -561,7 +573,7 @@ fn borrowed_type_needs(ty: &Type, schema: &Schema, visiting: &mut Vec<String>) -
         Type::Primitive(name) if name == "String" => true,
         ty if is_byte_vec(ty) => true,
         Type::Primitive(name) => struct_needs_borrowed(name, schema, visiting),
-        Type::Vec(_) | Type::Map(_, _) => false,
+        Type::Vec(_) | Type::Map(_, _) => true,
     }
 }
 
@@ -669,6 +681,19 @@ mod tests {
         assert!(generated.contains("pub struct MessageRef<'a>"));
         assert!(generated.contains("pub sender: UserRef<'a>"));
         assert!(generated.contains("typikon::BorrowedWireCodec::decode_borrowed(decoder)?"));
+    }
+
+    #[test]
+    fn generates_lazy_borrowed_collection_views() {
+        let schema = parse_schema(
+            "#[version(1)] struct Packet { labels: Vec<String>, metadata: Map<String, String>, }",
+        )
+        .unwrap();
+        let generated = generate_rust(&schema);
+        assert!(generated.contains("pub labels: typikon::BorrowedVec<'a, &'a str>"));
+        assert!(generated.contains("pub metadata: typikon::BorrowedMap<'a, &'a str, &'a str>"));
+        assert!(generated.contains("decoder.borrowed_vec()?"));
+        assert!(generated.contains("decoder.borrowed_map()?"));
     }
 
     #[test]

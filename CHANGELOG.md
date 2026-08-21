@@ -16,6 +16,7 @@ All notable changes to Typikon since its initial public beta are documented here
 - Expanded the comparison harness with 64 KiB and 1 MiB binary-payload cases.
 - Added backward-compatible Layer transition checks for existing constructors, enum variants, and flags.
 - Generated Rust codecs can now decode with caller-supplied packet, collection, and byte-field limits.
+- Added `tests/long_validation.sh` for repeatable multi-hour or multi-day validation runs.
 - FlatBuffers comparison now reports verified and unchecked view decoding separately, making validation overhead explicit.
 - Borrowed collection boundary scans now use structural skip paths for length-delimited values and generated nested views.
 - Documented the crate-root zero-copy API and the separate ownership contract still required for language-binding view handles.

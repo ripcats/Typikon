@@ -294,6 +294,8 @@ Reproducible benchmarks are available through `cargo bench --bench wire` and `ca
 
 The repository also includes build checks for the Python binding and the Go/TypeScript native crates. The TypeScript facade is checked with `npm test`, while the Go facade is checked with `go test ./bindings/go`; the golden wire round-trip matches across Python, TypeScript, and Go.
 
+For a long-running validation pass, use `TYPIKON_STRESS_SECONDS=172800 ./tests/long_validation.sh`. The script repeats release tests, native TypeScript tests, the TypeScript typecheck, and the cross-language round-trip, writing its log to `/tmp/typikon-long-validation.log`.
+
 ## Repository layout
 
 ~~~text

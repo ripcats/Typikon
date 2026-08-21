@@ -277,7 +277,7 @@ Typikon — собственная schema-driven реализация бинар
 
 Воспроизводимый benchmark запускается командой `cargo bench --bench wire`. Он отдельно измеряет encode, owned/borrowed decode и 64 KiB binary payload; результат зависит от CPU и профиля сборки и не считается сетевым benchmark.
 
-В репозитории также есть проверки сборки Python binding и native crates Go/TypeScript. TypeScript facade проверяется через `npm test`; полный Go package test требует установленного Go toolchain.
+В репозитории также есть проверки сборки Python binding и native crates Go/TypeScript. TypeScript facade проверяется через `npm test`, а Go facade — через `go test ./bindings/go`; golden wire round-trip совпадает для Python, TypeScript и Go.
 
 ## Структура
 

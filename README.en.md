@@ -277,7 +277,7 @@ The current Rust suite contains **45 tests: 42 unit tests and 3 integration test
 
 A reproducible benchmark is available through `cargo bench --bench wire`. It measures encoding, owned/borrowed decoding, and a 64 KiB binary payload separately; results depend on the CPU and build profile and are not a network benchmark.
 
-The repository also includes build checks for the Python binding and the Go/TypeScript native crates. The TypeScript facade is checked with `npm test`; the full Go package test requires an installed Go toolchain.
+The repository also includes build checks for the Python binding and the Go/TypeScript native crates. The TypeScript facade is checked with `npm test`, while the Go facade is checked with `go test ./bindings/go`; the golden wire round-trip matches across Python, TypeScript, and Go.
 
 ## Repository layout
 

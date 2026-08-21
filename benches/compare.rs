@@ -57,6 +57,14 @@ impl<'a> BorrowedWireCodec<'a> for AttachmentView<'a> {
             size: d.value()?,
         })
     }
+
+    fn skip_borrowed(d: &mut Decoder<'a>) -> Result<(), WireError> {
+        d.expect_cid_bytes(&A)?;
+        d.skip_string()?;
+        d.skip_string()?;
+        d.u64()?;
+        Ok(())
+    }
 }
 
 fn data() -> Data {

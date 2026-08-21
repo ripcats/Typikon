@@ -47,11 +47,19 @@ impl<'a> BorrowedWireCodec<'a> for &'a str {
     fn decode_borrowed(decoder: &mut Decoder<'a>) -> Result<Self, WireError> {
         decoder.string_borrowed()
     }
+
+    fn skip_borrowed(decoder: &mut Decoder<'a>) -> Result<(), WireError> {
+        decoder.skip_string()
+    }
 }
 
 impl<'a> BorrowedWireCodec<'a> for &'a [u8] {
     fn decode_borrowed(decoder: &mut Decoder<'a>) -> Result<Self, WireError> {
         decoder.bytes_borrowed()
+    }
+
+    fn skip_borrowed(decoder: &mut Decoder<'a>) -> Result<(), WireError> {
+        decoder.skip_bytes()
     }
 }
 
@@ -117,6 +125,10 @@ impl<'a, T: BorrowedWireCodec<'a>> BorrowedVec<'a, T> {
 impl<'a, T: BorrowedWireCodec<'a>> BorrowedWireCodec<'a> for BorrowedVec<'a, T> {
     fn decode_borrowed(decoder: &mut Decoder<'a>) -> Result<Self, WireError> {
         decoder.borrowed_vec()
+    }
+
+    fn skip_borrowed(decoder: &mut Decoder<'a>) -> Result<(), WireError> {
+        decoder.skip_vec::<T>()
     }
 }
 
@@ -197,6 +209,10 @@ impl<'a, K: BorrowedWireCodec<'a>, V: BorrowedWireCodec<'a>> BorrowedWireCodec<'
 {
     fn decode_borrowed(decoder: &mut Decoder<'a>) -> Result<Self, WireError> {
         decoder.borrowed_map()
+    }
+
+    fn skip_borrowed(decoder: &mut Decoder<'a>) -> Result<(), WireError> {
+        decoder.skip_map::<K, V>()
     }
 }
 
@@ -525,11 +541,21 @@ impl<'a> Decoder<'a> {
         }
         self.read_slice(len)
     }
+    pub fn skip_bytes(&mut self) -> Result<(), WireError> {
+        let len = usize::try_from(self.varint()?).map_err(|_| WireError::IntegerOverflow)?;
+        if len > self.max_size {
+            return Err(WireError::PacketTooLarge);
+        }
+        self.read_slice(len).map(|_| ())
+    }
     pub fn string(&mut self) -> Result<String, WireError> {
         Ok(self.string_borrowed()?.to_owned())
     }
     pub fn string_borrowed(&mut self) -> Result<&'a str, WireError> {
         std::str::from_utf8(self.bytes_borrowed()?).map_err(|_| WireError::InvalidUtf8)
+    }
+    pub fn skip_string(&mut self) -> Result<(), WireError> {
+        self.skip_bytes()
     }
     pub fn borrowed_vec<T: BorrowedWireCodec<'a>>(
         &mut self,
@@ -569,6 +595,29 @@ impl<'a> Decoder<'a> {
             max_size: self.max_size,
             marker: PhantomData,
         })
+    }
+    pub fn skip_vec<T: BorrowedWireCodec<'a>>(&mut self) -> Result<(), WireError> {
+        let count = usize::try_from(self.varint()?).map_err(|_| WireError::IntegerOverflow)?;
+        if count > self.max_size {
+            return Err(WireError::PacketTooLarge);
+        }
+        for _ in 0..count {
+            T::skip_borrowed(self)?;
+        }
+        Ok(())
+    }
+    pub fn skip_map<K: BorrowedWireCodec<'a>, V: BorrowedWireCodec<'a>>(
+        &mut self,
+    ) -> Result<(), WireError> {
+        let count = usize::try_from(self.varint()?).map_err(|_| WireError::IntegerOverflow)?;
+        if count > self.max_size {
+            return Err(WireError::PacketTooLarge);
+        }
+        for _ in 0..count {
+            K::skip_borrowed(self)?;
+            V::skip_borrowed(self)?;
+        }
+        Ok(())
     }
     pub fn value<T: WireCodec>(&mut self) -> Result<T, WireError> {
         T::decode(self)
@@ -912,6 +961,14 @@ mod tests {
             decoder.borrowed_vec::<&str>(),
             Err(WireError::UnexpectedEof)
         ));
+    }
+
+    #[test]
+    fn structural_skip_advances_without_utf8_decoding() {
+        let packet = [2, 2, 0xff, 1, 1, b'x'];
+        let mut decoder = Decoder::new(&packet, LIMIT).unwrap();
+        decoder.skip_vec::<&str>().unwrap();
+        assert!(decoder.is_finished());
     }
 
     #[test]

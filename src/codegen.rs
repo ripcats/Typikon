@@ -283,7 +283,46 @@ fn generate_borrowed_struct(item: &Struct, schema: &Schema, output: &mut String)
             .collect::<Vec<_>>()
             .join(", "),
     );
-    output.push_str(" })\n    }\n}\n");
+    output.push_str(" })\n    }\n");
+    output.push_str("    fn skip_borrowed(decoder: &mut typikon::Decoder<'a>) -> Result<(), typikon::WireError> {\n");
+    output.push_str(&format!(
+        "        decoder.expect_cid_bytes(&{}_CID_BYTES)?;\n",
+        item.name.to_uppercase()
+    ));
+    let guard_owners = item
+        .fields
+        .iter()
+        .filter_map(|field| field.guard.as_ref())
+        .map(|guard| guard.split_once('.').unwrap_or(("flags", guard)).0)
+        .collect::<Vec<_>>();
+    for field in &item.fields {
+        if let Some(guard) = &field.guard {
+            let (owner, bit) = guard.split_once('.').unwrap_or(("flags", guard));
+            let owner_type = item
+                .fields
+                .iter()
+                .find(|candidate| candidate.name == owner)
+                .map(|candidate| rust_type(&candidate.ty))
+                .unwrap_or_else(|| owner.to_owned());
+            output.push_str(&format!(
+                "        if {owner}.contains({owner_type}::{}) {{ {} }}\n",
+                const_name(bit),
+                borrowed_skip_statement(&field.ty, schema)
+            ));
+        } else if guard_owners.iter().any(|owner| *owner == field.name) {
+            output.push_str(&format!(
+                "        let {}: {} = typikon::WireCodec::decode(decoder)?;\n",
+                field.name,
+                rust_type(&field.ty)
+            ));
+        } else {
+            output.push_str("        ");
+            output.push_str(&borrowed_skip_statement(&field.ty, schema));
+            output.push('\n');
+        }
+    }
+    output.push_str("        Ok(())\n    }\n");
+    output.push_str("}\n");
 }
 
 fn generate_enum(item: &Enum, schema: &Schema, output: &mut String) {
@@ -599,6 +638,27 @@ fn borrowed_decode_expression(ty: &Type, schema: &Schema) -> String {
     }
 }
 
+fn borrowed_skip_statement(ty: &Type, schema: &Schema) -> String {
+    match ty {
+        Type::Primitive(name) if name == "String" => "decoder.skip_string()?;".into(),
+        ty if is_byte_vec(ty) => "decoder.skip_bytes()?;".into(),
+        Type::Vec(item) => format!("decoder.skip_vec::<{}>()?;", borrowed_type(item, schema)),
+        Type::Map(key, value) => format!(
+            "decoder.skip_map::<{}, {}>()?;",
+            borrowed_type(key, schema),
+            borrowed_type(value, schema)
+        ),
+        Type::Primitive(name) if named_needs_borrowed(name, schema, &mut Vec::new()) => format!(
+            "<{}Ref<'a> as typikon::BorrowedWireCodec<'a>>::skip_borrowed(decoder)?;",
+            name
+        ),
+        _ => format!(
+            "let _: {} = typikon::WireCodec::decode(decoder)?;",
+            rust_type(ty)
+        ),
+    }
+}
+
 fn borrowed_type(ty: &Type, schema: &Schema) -> String {
     match ty {
         Type::Primitive(name) if name == "String" => "&'a str".into(),
@@ -773,6 +833,8 @@ mod tests {
         assert!(generated.contains("pub struct MessageRef<'a>"));
         assert!(generated.contains("pub sender: UserRef<'a>"));
         assert!(generated.contains("typikon::BorrowedWireCodec::decode_borrowed(decoder)?"));
+        assert!(generated.contains("fn skip_borrowed(decoder: &mut typikon::Decoder<'a>)"));
+        assert!(generated.contains("decoder.skip_string()?"));
     }
 
     #[test]

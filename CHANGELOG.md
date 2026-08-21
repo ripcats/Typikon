@@ -14,6 +14,7 @@ All notable changes to Typikon since its initial public beta are documented here
 - The checked-in benchmark now includes a collection-heavy messenger path with owned decode, borrowed decode, and lazy iteration measurements.
 - Added a reproducible Typikon/FlatBuffers comparison harness with wire size, encode/decode, iteration, and allocation metrics.
 - FlatBuffers comparison now reports verified and unchecked view decoding separately, making validation overhead explicit.
+- Borrowed collection boundary scans now use structural skip paths for length-delimited values and generated nested views.
 - Documented the crate-root zero-copy API and the separate ownership contract still required for language-binding view handles.
 - Reusable encoder buffers, exact generated size hints, borrowed string/byte decoding, and binary TypeScript bridge entry points.
 - Reproducible `cargo bench --bench wire` benchmark for message and 64 KiB payload paths.

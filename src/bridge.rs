@@ -394,7 +394,7 @@ fn generate_typescript_typed_item(item: &Item, schema: &Schema, output: &mut Str
                         owner,
                         ts_guard_bit(schema, owner, bit)
                     ));
-                    typescript_encode_type(&field.ty, &expr, schema, output);
+                    typescript_encode_type(&field.ty, &format!("{}!", expr), schema, output);
                     output.push_str(" }");
                 } else {
                     typescript_encode_type(&field.ty, &expr, schema, output);

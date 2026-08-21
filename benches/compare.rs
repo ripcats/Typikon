@@ -520,7 +520,7 @@ fn main() {
         flat_owned_allocs, flat_view_allocs
     );
     println!(
-        "format=tl bytes={} encode_ns={tl_encode:.2} owned_decode_ns={tl_owned:.2} borrowed_decode_and_iterate_ns={tl_view:.2}",
+        "format=tl_style bytes={} encode_ns={tl_encode:.2} owned_decode_ns={tl_owned:.2} borrowed_decode_and_iterate_ns={tl_view:.2}",
         tl_wire.len()
     );
     println!(

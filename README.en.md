@@ -290,7 +290,7 @@ Transport and application logic intentionally remain a separate layer. Typikon f
 
 The current Rust suite contains **52 tests: 49 unit tests and 3 integration tests**. It covers parsing and semantic validation, code generation, reproducible public schemas, the CLI, Layer negotiation, C-IDs, primitive/collection wire round-trips, limits, malformed/truncated input, duplicate map keys, canonical VarInt, borrowed decoding, lazy borrowed collections, vectored writes, and randomized parser/wire inputs.
 
-Reproducible benchmarks are available through `cargo bench --bench wire` and `cargo bench --bench compare`. The first measures Typikon internals; the second compares the same collection-heavy shape with FlatBuffers and a standard TL layout: wire size, encoding, owned decoding, borrowed decoding with full iteration, and allocation count. Results depend on the CPU and build profile and are not a network benchmark.
+Reproducible benchmarks are available through `cargo bench --bench wire` and `cargo bench --bench compare`. The first measures Typikon internals; the second compares the same collection-heavy shape with FlatBuffers and a local TL-style layout: wire size, encoding, owned decoding, borrowed decoding with full iteration, and allocation count. This is a reference fixture based on TL wire rules, not a Telegram-generated schema or third-party TL runtime. Results depend on the CPU and build profile and are not a network benchmark.
 
 The repository also includes build checks for the Python binding and the Go/TypeScript native crates. The TypeScript facade is checked with `npm test`, while the Go facade is checked with `go test ./bindings/go`; the golden wire round-trip matches across Python, TypeScript, and Go.
 

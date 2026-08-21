@@ -13,6 +13,7 @@ All notable changes to Typikon since its initial public beta are documented here
 - Added transport-neutral `Encoder::write_vectored` for sending framing segments around a packet without an intermediate concatenation.
 - The checked-in benchmark now includes a collection-heavy messenger path with owned decode, borrowed decode, and lazy iteration measurements.
 - Added a reproducible Typikon/FlatBuffers/TL comparison harness with wire size, encode/decode, iteration, and allocation metrics.
+- Clarified that the comparison uses a local TL-style reference fixture, not Telegram's generated TL schema or a third-party runtime.
 - Documented the crate-root zero-copy API and the separate ownership contract still required for language-binding view handles.
 - Reusable encoder buffers, exact generated size hints, borrowed string/byte decoding, and binary TypeScript bridge entry points.
 - Reproducible `cargo bench --bench wire` benchmark for message and 64 KiB payload paths.

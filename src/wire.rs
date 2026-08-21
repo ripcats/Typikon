@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 const MAX_VARINT_BYTES: usize = 10;
+const DEFAULT_ENCODER_CAPACITY: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WireError {
@@ -29,8 +30,11 @@ pub trait WireCodec: Sized {
 
 impl Encoder {
     pub fn new(max_size: usize) -> Self {
+        Self::with_capacity(max_size, DEFAULT_ENCODER_CAPACITY)
+    }
+    pub fn with_capacity(max_size: usize, capacity: usize) -> Self {
         Self {
-            bytes: Vec::new(),
+            bytes: Vec::with_capacity(capacity.min(max_size)),
             max_size,
         }
     }

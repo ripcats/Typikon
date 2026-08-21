@@ -8,7 +8,7 @@ pub trait TypikonCodec: Sized {
 }
 
 pub fn encode_value<T: WireCodec>(value: &T) -> Result<Vec<u8>, WireError> {
-    let mut encoder = crate::wire::Encoder::new(DEFAULT_MAX_PACKET_SIZE);
+    let mut encoder = crate::wire::Encoder::with_capacity(DEFAULT_MAX_PACKET_SIZE, 128);
     value.encode(&mut encoder)?;
     encoder.finish()
 }

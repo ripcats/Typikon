@@ -119,6 +119,18 @@ func TestBorrowedViewsCoverNestedAndEnumPayloads(t *testing.T) {
 	if !ok || string(edited.Text) != "edit" {
 		t.Fatalf("unexpected update view: %#v", update)
 	}
+	createdWire, err := EncodeUpdate(UpdateMessageCreated{Message: Message{Sender: User{Presence: Presence("Online")}, Attachments: []Attachment{{Name: "nested"}}, Metadata: map[string]string{}}})
+	if err != nil {
+		t.Fatalf("EncodeUpdate created: %v", err)
+	}
+	created, err := BorrowUpdateLazy(createdWire)
+	if err != nil {
+		t.Fatalf("BorrowUpdateLazy: %v", err)
+	}
+	createdView, ok := created.(UpdateMessageCreatedLazyView)
+	if !ok || createdView.Message.AttachmentsLen() != 1 {
+		t.Fatalf("nested enum lazy view was materialized: %#v", created)
+	}
 	lazy, err := BorrowMessageLazy(wire)
 	if err != nil {
 		t.Fatalf("BorrowMessageLazy: %v", err)

@@ -449,6 +449,59 @@ fn generate_go_view_enum(item: &crate::Enum, schema: &Schema, output: &mut Strin
     }
     output.push_str("default:return nil,fmt.Errorf(\"unknown constructor\")}}\n");
     output.push_str(&format!("func Borrow{name}(b []byte) ({name}View,error) {{ d:=wireDecoder{{b:b}}; v,e:=read{name}View(&d);if e==nil{{e=d.done()}};return v,e }}\n\n"));
+    generate_go_lazy_view_enum(item, schema, output);
+}
+
+fn generate_go_lazy_view_enum(item: &crate::Enum, schema: &Schema, output: &mut String) {
+    if item.variants.iter().all(|variant| {
+        variant
+            .fields
+            .iter()
+            .all(|field| !matches!(field.ty, Type::Primitive(_)))
+    }) {
+        return;
+    }
+    let name = &item.name;
+    output.push_str(&format!(
+        "type {name}LazyView interface{{is{name}LazyView()}}\n"
+    ));
+    for variant in &item.variants {
+        let variant_name = format!("{}{}LazyView", name, variant.name);
+        output.push_str(&format!("type {variant_name} struct{{"));
+        for field in &variant.fields {
+            output.push_str(&format!(
+                " {} {};",
+                pascal_case(&field.name),
+                go_lazy_view_type(&field.ty, schema)
+            ));
+        }
+        output.push_str(&format!(
+            "}}\nfunc ({variant_name})is{name}LazyView(){{}}\n"
+        ));
+    }
+    output.push_str(&format!("func read{name}LazyView(d *wireDecoder) ({name}LazyView,error){{c,e:=d.take(8);if e!=nil{{return nil,e}};switch string(c){{"));
+    for variant in &item.variants {
+        let variant_name = format!("{}{}LazyView", name, variant.name);
+        let cid = variant
+            .cid
+            .clone()
+            .unwrap_or_else(|| variant_cid(item, variant));
+        output.push_str(&format!(
+            "case string([]byte{{{}}}):var v {variant_name};",
+            cid_bytes(&cid)
+        ));
+        for field in &variant.fields {
+            go_decode_lazy_view_type(
+                &field.ty,
+                &format!("v.{}", pascal_case(&field.name)),
+                schema,
+                output,
+            );
+        }
+        output.push_str("return v,e;");
+    }
+    output.push_str("default:return nil,fmt.Errorf(\"unknown constructor\")}}\n");
+    output.push_str(&format!("func Borrow{name}Lazy(b []byte) ({name}LazyView,error){{d:=wireDecoder{{b:b}};v,e:=read{name}LazyView(&d);if e==nil{{e=d.done()}};return v,e}}\n\n"));
 }
 
 fn go_decode_view_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut String) {
@@ -1314,6 +1367,52 @@ fn generate_typescript_view_enum(item: &crate::Enum, schema: &Schema, output: &m
     }
     output.push_str(" throw new Error('unknown constructor'); }\n");
     output.push_str(&format!("export function decode{name}View(wire: Uint8Array): {name}View {{ const d = new WireDecoder(wire); const value = read_{lower}_view(d); d.done(); return value; }}\n\n"));
+    generate_typescript_lazy_view_enum(item, schema, output);
+}
+
+fn generate_typescript_lazy_view_enum(item: &crate::Enum, schema: &Schema, output: &mut String) {
+    let name = &item.name;
+    let lower = name.to_ascii_lowercase();
+    let variants = item
+        .variants
+        .iter()
+        .map(|variant| {
+            let fields = variant
+                .fields
+                .iter()
+                .map(|field| {
+                    format!(
+                        "{}: {}",
+                        field.name,
+                        typescript_lazy_view_type(&field.ty, schema)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            format!("{{ {}: {{ {} }} }}", variant.name, fields)
+        })
+        .collect::<Vec<_>>()
+        .join(" | ");
+    output.push_str(&format!("export type {name}LazyView = {variants};\nfunction read_{lower}_lazy_view(d: WireDecoder, wire: Uint8Array): {name}LazyView {{ const c = d.take(8);"));
+    for variant in &item.variants {
+        let cid = variant
+            .cid
+            .clone()
+            .unwrap_or_else(|| variant_cid(item, variant));
+        output.push_str(&format!(
+            " if (c.every((x, i) => x === hex(\"{}\")[i])) return {{ {}: {{",
+            cid, variant.name
+        ));
+        for field in &variant.fields {
+            output.push_str(&format!(" {}: ", field.name));
+            let mut expr = String::new();
+            typescript_decode_lazy_expression(&field.ty, schema, &mut expr);
+            output.push_str(&expr);
+            output.push(',');
+        }
+        output.push_str(" } };");
+    }
+    output.push_str(&format!(" throw new Error('unknown constructor'); }}\nexport function decode{name}LazyView(wire: Uint8Array): {name}LazyView {{ const d = new WireDecoder(wire); const value = read_{lower}_lazy_view(d, wire); d.done(); return value; }}\n\n"));
 }
 
 fn typescript_decode_view_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut String) {

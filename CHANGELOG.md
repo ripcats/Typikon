@@ -32,6 +32,7 @@ All notable changes to Typikon since its initial public beta are documented here
 - Propagated Go lazy views through nested named structs, so nested collections remain packet-backed instead of falling back to materialized views.
 - Propagated TypeScript lazy views through nested named structs with owner-aware decoder callbacks.
 - Added Go lazy `Iter` and TypeScript lazy `[Symbol.iterator]` APIs, plus native TypeScript and Python owner/aliasing regression checks.
+- Added recursive lazy handling across enum payloads (`BorrowUpdateLazy` / `decodeUpdateLazyView`).
 
 ### Changed
 

@@ -1177,3 +1177,73 @@ func BorrowUpdate(wire []byte) (UpdateView, error) {
 		return nil, fmt.Errorf("unknown Update constructor")
 	}
 }
+
+type UpdateLazyView interface{ isUpdateLazyView() }
+type UpdateMessageCreatedLazyView struct{ Message MessageLazyView }
+
+func (UpdateMessageCreatedLazyView) isUpdateLazyView() {}
+
+type UpdateMessageEditedLazyView struct {
+	ChatID, MessageID uint64
+	Text              []byte
+}
+
+func (UpdateMessageEditedLazyView) isUpdateLazyView() {}
+
+type UpdateUserJoinedLazyView struct {
+	ChatID uint64
+	User   UserLazyView
+}
+
+func (UpdateUserJoinedLazyView) isUpdateLazyView() {}
+
+func BorrowUpdateLazy(wire []byte) (UpdateLazyView, error) {
+	d := wireDecoder{b: wire}
+	c, e := d.take(8)
+	if e != nil {
+		return nil, e
+	}
+	switch string(c) {
+	case string([]byte{0x20, 0x50, 0xae, 0x79, 0xc1, 0x93, 0x2b, 0x3a}):
+		v, e := readMessageLazyView(&d)
+		if e != nil {
+			return nil, e
+		}
+		if e = d.done(); e != nil {
+			return nil, e
+		}
+		return UpdateMessageCreatedLazyView{v}, nil
+	case string([]byte{0x03, 0x60, 0xfb, 0x29, 0x95, 0x8d, 0xb3, 0x46}):
+		a, e := d.u64()
+		if e != nil {
+			return nil, e
+		}
+		m, e := d.u64()
+		if e != nil {
+			return nil, e
+		}
+		t, e := d.bytes()
+		if e != nil {
+			return nil, e
+		}
+		if e = d.done(); e != nil {
+			return nil, e
+		}
+		return UpdateMessageEditedLazyView{a, m, t}, nil
+	case string([]byte{0x75, 0x81, 0xf3, 0xd0, 0xbf, 0x40, 0x67, 0xa2}):
+		a, e := d.u64()
+		if e != nil {
+			return nil, e
+		}
+		u, e := readUserLazyView(&d)
+		if e != nil {
+			return nil, e
+		}
+		if e = d.done(); e != nil {
+			return nil, e
+		}
+		return UpdateUserJoinedLazyView{a, u}, nil
+	default:
+		return nil, fmt.Errorf("unknown Update constructor")
+	}
+}

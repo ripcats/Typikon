@@ -126,6 +126,18 @@ func TestGeneratedBorrowedViews(t *testing.T) {
 	if !ok || string(edited.Text) != "edit" {
 		t.Fatalf("unexpected generated enum view: %#v", update)
 	}
+	createdWire, err := EncodeUpdate(UpdateMessageCreated{Message: Message{Sender: User{Presence: Presence("Online")}, Attachments: []Attachment{{Name: "nested"}}, Metadata: map[string]string{}}})
+	if err != nil {
+		t.Fatalf("EncodeUpdate created: %v", err)
+	}
+	created, err := BorrowUpdateLazy(createdWire)
+	if err != nil {
+		t.Fatalf("BorrowUpdateLazy: %v", err)
+	}
+	createdView, ok := created.(UpdateMessageCreatedLazyView)
+	if !ok || createdView.Message.Attachments.Len() != 1 {
+		t.Fatalf("nested enum lazy view was materialized: %#v", created)
+	}
 }
 
 func TestGeneratedBorrowedViewsRejectTruncatedWire(t *testing.T) {

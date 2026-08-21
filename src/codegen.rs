@@ -123,7 +123,7 @@ fn generate_struct(item: &Struct, schema: &Schema, output: &mut String) {
         item.name
     ));
     output.push_str("    fn encode(&self) -> Result<Vec<u8>, typikon::WireError> { typikon::encode_value(self) }\n");
-    output.push_str("    fn decode(bytes: &[u8]) -> Result<Self, typikon::WireError> { let mut decoder = typikon::Decoder::new(bytes, typikon::DEFAULT_MAX_PACKET_SIZE)?; let value = <Self as typikon::WireCodec>::decode(&mut decoder)?; if decoder.is_finished() { Ok(value) } else { Err(typikon::WireError::MalformedConstructor) } }\n}\n");
+    output.push_str("    fn decode(bytes: &[u8]) -> Result<Self, typikon::WireError> { <Self as typikon::TypikonCodec>::decode_with_limits(bytes, typikon::DecodeLimits::default()) }\n}\n");
     output.push_str(&format!("impl typikon::WireCodec for {} {{\n", item.name));
     output.push_str("    fn encode(&self, encoder: &mut typikon::Encoder) -> Result<(), typikon::WireError> {\n");
     output.push_str(&format!(
@@ -372,7 +372,7 @@ fn generate_enum(item: &Enum, schema: &Schema, output: &mut String) {
         item.name
     ));
     output.push_str("    fn encode(&self) -> Result<Vec<u8>, typikon::WireError> { typikon::encode_value(self) }\n");
-    output.push_str("    fn decode(bytes: &[u8]) -> Result<Self, typikon::WireError> { let mut decoder = typikon::Decoder::new(bytes, typikon::DEFAULT_MAX_PACKET_SIZE)?; let value = <Self as typikon::WireCodec>::decode(&mut decoder)?; if decoder.is_finished() { Ok(value) } else { Err(typikon::WireError::MalformedConstructor) } }\n}\n");
+    output.push_str("    fn decode(bytes: &[u8]) -> Result<Self, typikon::WireError> { <Self as typikon::TypikonCodec>::decode_with_limits(bytes, typikon::DecodeLimits::default()) }\n}\n");
     output.push_str(&format!("impl typikon::WireCodec for {} {{\n", item.name));
     output.push_str("    fn encode(&self, encoder: &mut typikon::Encoder) -> Result<(), typikon::WireError> { match self {\n");
     for variant in &item.variants {
@@ -564,7 +564,7 @@ fn generate_unit_enum(item: &Enum, output: &mut String) {
         item.name
     ));
     output.push_str("    fn encode(&self) -> Result<Vec<u8>, typikon::WireError> { typikon::encode_value(self) }\n");
-    output.push_str("    fn decode(bytes: &[u8]) -> Result<Self, typikon::WireError> { let mut decoder = typikon::Decoder::new(bytes, typikon::DEFAULT_MAX_PACKET_SIZE)?; let value = <Self as typikon::WireCodec>::decode(&mut decoder)?; if decoder.is_finished() { Ok(value) } else { Err(typikon::WireError::MalformedConstructor) } }\n}\n");
+    output.push_str("    fn decode(bytes: &[u8]) -> Result<Self, typikon::WireError> { <Self as typikon::TypikonCodec>::decode_with_limits(bytes, typikon::DecodeLimits::default()) }\n}\n");
     output.push_str(&format!("impl typikon::WireCodec for {} {{\n", item.name));
     output.push_str("    fn encode(&self, encoder: &mut typikon::Encoder) -> Result<(), typikon::WireError> { encoder.u64(*self as u64) }\n");
     output.push_str("    fn decode(decoder: &mut typikon::Decoder<'_>) -> Result<Self, typikon::WireError> { match decoder.u64()? {\n");

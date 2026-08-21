@@ -23,7 +23,8 @@ pub use bridge::{
     generate_typescript_binding,
 };
 pub use codec::{
-    DEFAULT_MAX_PACKET_SIZE, TypikonCodec, decode_borrowed_value, decode_value, encode_value,
+    DEFAULT_MAX_PACKET_SIZE, TypikonCodec, decode_borrowed_value,
+    decode_borrowed_value_with_limits, decode_value, encode_value,
 };
 pub use codegen::{generate_public_schema, generate_rust};
 pub use compatibility::{CompatibilityError, is_backward_compatible};

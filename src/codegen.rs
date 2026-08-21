@@ -7,7 +7,7 @@ pub fn generate_rust(schema: &Schema) -> String {
     for item in &schema.items {
         match item {
             Item::Struct(item) => generate_struct(item, schema, &mut output),
-            Item::Enum(item) => generate_enum(item, &mut output),
+            Item::Enum(item) => generate_enum(item, schema, &mut output),
             Item::Flags(item) => generate_flags(item, &mut output),
         }
         output.push('\n');
@@ -286,7 +286,7 @@ fn generate_borrowed_struct(item: &Struct, schema: &Schema, output: &mut String)
     output.push_str(" })\n    }\n}\n");
 }
 
-fn generate_enum(item: &Enum, output: &mut String) {
+fn generate_enum(item: &Enum, schema: &Schema, output: &mut String) {
     if item
         .variants
         .iter()
@@ -440,6 +440,73 @@ fn generate_enum(item: &Enum, output: &mut String) {
         }
     }
     output.push_str("    } }\n}\n");
+    generate_borrowed_enum(item, schema, output);
+}
+
+fn generate_borrowed_enum(item: &Enum, schema: &Schema, output: &mut String) {
+    if !item
+        .variants
+        .iter()
+        .flat_map(|variant| &variant.fields)
+        .any(|field| borrowed_type_needs(&field.ty, schema, &mut Vec::new()))
+    {
+        return;
+    }
+
+    output.push_str("#[derive(Debug, Clone, PartialEq)]\n");
+    output.push_str(&format!("pub enum {}Ref<'a> {{\n", item.name));
+    for variant in &item.variants {
+        if variant.fields.is_empty() {
+            output.push_str(&format!("    {},\n", variant.name));
+        } else {
+            output.push_str(&format!("    {} {{\n", variant.name));
+            for field in &variant.fields {
+                output.push_str(&format!(
+                    "        {}: {},\n",
+                    field.name,
+                    borrowed_rust_field_type(field, schema)
+                ));
+            }
+            output.push_str("    },\n");
+        }
+    }
+    output.push_str("}\n");
+    output.push_str(&format!("impl<'a> {}Ref<'a> {{ pub fn decode_borrowed(bytes: &'a [u8]) -> Result<Self, typikon::WireError> {{ typikon::decode_borrowed_value(bytes) }} }}\n", item.name));
+    output.push_str(&format!(
+        "impl<'a> typikon::BorrowedWireCodec<'a> for {}Ref<'a> {{\n",
+        item.name
+    ));
+    output.push_str("    fn decode_borrowed(decoder: &mut typikon::Decoder<'a>) -> Result<Self, typikon::WireError> { match decoder.read_cid_bytes()? {\n");
+    for variant in &item.variants {
+        output.push_str(&format!(
+            "        {}_{}_CID_BYTES => {{",
+            item.name.to_uppercase(),
+            variant.name.to_uppercase()
+        ));
+        for field in &variant.fields {
+            output.push_str(&format!(
+                " let {}: {} = {};",
+                field.name,
+                borrowed_rust_field_type(field, schema),
+                borrowed_decode_expression(&field.ty, schema)
+            ));
+        }
+        if variant.fields.is_empty() {
+            output.push_str(&format!(" Ok(Self::{}) }},\n", variant.name));
+        } else {
+            output.push_str(&format!(
+                " Ok(Self::{} {{ {} }}) }},\n",
+                variant.name,
+                variant
+                    .fields
+                    .iter()
+                    .map(|field| field.name.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+    }
+    output.push_str("        _ => Err(typikon::WireError::UnknownCId), } }\n}\n");
 }
 
 fn generate_unit_enum(item: &Enum, output: &mut String) {
@@ -525,7 +592,7 @@ fn borrowed_decode_expression(ty: &Type, schema: &Schema) -> String {
         ty if is_byte_vec(ty) => "decoder.bytes_borrowed()?".into(),
         Type::Vec(_) => "decoder.borrowed_vec()?".into(),
         Type::Map(_, _) => "decoder.borrowed_map()?".into(),
-        Type::Primitive(name) if struct_needs_borrowed(name, schema, &mut Vec::new()) => {
+        Type::Primitive(name) if named_needs_borrowed(name, schema, &mut Vec::new()) => {
             "typikon::BorrowedWireCodec::decode_borrowed(decoder)?".into()
         }
         _ => "typikon::WireCodec::decode(decoder)?".into(),
@@ -536,7 +603,7 @@ fn borrowed_type(ty: &Type, schema: &Schema) -> String {
     match ty {
         Type::Primitive(name) if name == "String" => "&'a str".into(),
         ty if is_byte_vec(ty) => "&'a [u8]".into(),
-        Type::Primitive(name) if struct_needs_borrowed(name, schema, &mut Vec::new()) => {
+        Type::Primitive(name) if named_needs_borrowed(name, schema, &mut Vec::new()) => {
             format!("{name}Ref<'a>")
         }
         Type::Vec(item) => format!("typikon::BorrowedVec<'a, {}>", borrowed_type(item, schema)),
@@ -572,9 +639,34 @@ fn borrowed_type_needs(ty: &Type, schema: &Schema, visiting: &mut Vec<String>) -
     match ty {
         Type::Primitive(name) if name == "String" => true,
         ty if is_byte_vec(ty) => true,
-        Type::Primitive(name) => struct_needs_borrowed(name, schema, visiting),
+        Type::Primitive(name) => named_needs_borrowed(name, schema, visiting),
         Type::Vec(_) | Type::Map(_, _) => true,
     }
+}
+
+fn named_needs_borrowed(name: &str, schema: &Schema, visiting: &mut Vec<String>) -> bool {
+    struct_needs_borrowed(name, schema, visiting) || enum_needs_borrowed(name, schema, visiting)
+}
+
+fn enum_needs_borrowed(name: &str, schema: &Schema, visiting: &mut Vec<String>) -> bool {
+    if visiting.iter().any(|current| current == name) {
+        return false;
+    }
+    let Some(Item::Enum(item)) = schema.items.iter().find(|item| match item {
+        Item::Enum(item) => item.name == name,
+        _ => false,
+    }) else {
+        return false;
+    };
+    visiting.push(name.to_owned());
+    let needs = item.variants.iter().any(|variant| {
+        variant
+            .fields
+            .iter()
+            .any(|field| borrowed_type_needs(&field.ty, schema, visiting))
+    });
+    visiting.pop();
+    needs
 }
 
 fn rust_type(ty: &Type) -> String {
@@ -694,6 +786,20 @@ mod tests {
         assert!(generated.contains("pub metadata: typikon::BorrowedMap<'a, &'a str, &'a str>"));
         assert!(generated.contains("decoder.borrowed_vec()?"));
         assert!(generated.contains("decoder.borrowed_map()?"));
+    }
+
+    #[test]
+    fn generates_borrowed_enum_payload_views() {
+        let schema = parse_schema(
+            "#[version(1)] enum Event { Text { body: String, }, Data { chunks: Vec<Vec<u8>>, }, Empty, }",
+        )
+        .unwrap();
+        let generated = generate_rust(&schema);
+        assert!(generated.contains("pub enum EventRef<'a>"));
+        assert!(generated.contains("body: &'a str"));
+        assert!(generated.contains("chunks: typikon::BorrowedVec<'a, &'a [u8]>"));
+        assert!(generated.contains("impl<'a> typikon::BorrowedWireCodec<'a> for EventRef<'a>"));
+        assert!(generated.contains("match decoder.read_cid_bytes()?"));
     }
 
     #[test]

@@ -611,3 +611,270 @@ func ValidateUpdate(b []byte) error {
 	}
 	return nil
 }
+
+// UserView is a borrowed view over a Typikon User packet. Byte/string fields
+// point into the caller-owned packet; keep the packet alive while using it.
+type UserView struct {
+	id          uint64
+	username    []byte
+	displayName []byte
+	flags       UserFlags
+	avatarURL   []byte
+	hasAvatar   bool
+	presence    Presence
+	roles       [][]byte
+}
+
+func (v UserView) ID() uint64               { return v.id }
+func (v UserView) UsernameBytes() []byte    { return v.username }
+func (v UserView) DisplayNameBytes() []byte { return v.displayName }
+func (v UserView) Flags() UserFlags         { return v.flags }
+func (v UserView) AvatarURLBytes() []byte   { return v.avatarURL }
+func (v UserView) HasAvatar() bool          { return v.hasAvatar }
+func (v UserView) Presence() Presence       { return v.presence }
+func (v UserView) RolesLen() int            { return len(v.roles) }
+func (v UserView) RoleBytes(i int) ([]byte, bool) {
+	if i < 0 || i >= len(v.roles) {
+		return nil, false
+	}
+	return v.roles[i], true
+}
+
+func readUserView(d *wireDecoder) (UserView, error) {
+	var v UserView
+	if err := cid(d, UserCID); err != nil {
+		return v, err
+	}
+	var err error
+	if v.id, err = d.u64(); err != nil {
+		return v, err
+	}
+	if v.username, err = d.bytes(); err != nil {
+		return v, err
+	}
+	if v.displayName, err = d.bytes(); err != nil {
+		return v, err
+	}
+	var flags uint16
+	if flags, err = d.u16(); err != nil {
+		return v, err
+	}
+	v.flags = UserFlags(flags)
+	if v.flags&(1<<2) != 0 {
+		v.hasAvatar = true
+		if v.avatarURL, err = d.bytes(); err != nil {
+			return v, err
+		}
+	}
+	if v.presence, err = decode_presence(d); err != nil {
+		return v, err
+	}
+	var n uint64
+	if n, err = d.varint(); err != nil {
+		return v, err
+	}
+	c, err := count(n)
+	if err != nil {
+		return v, err
+	}
+	v.roles = make([][]byte, c)
+	for i := range v.roles {
+		if v.roles[i], err = d.bytes(); err != nil {
+			return v, err
+		}
+	}
+	return v, nil
+}
+
+func BorrowUser(wire []byte) (UserView, error) {
+	d := wireDecoder{b: wire}
+	v, err := readUserView(&d)
+	if err == nil {
+		err = d.done()
+	}
+	return v, err
+}
+
+type AttachmentView struct {
+	id             uint64
+	name, mimeType []byte
+	size           uint64
+}
+
+func (v AttachmentView) ID() uint64            { return v.id }
+func (v AttachmentView) NameBytes() []byte     { return v.name }
+func (v AttachmentView) MimeTypeBytes() []byte { return v.mimeType }
+func (v AttachmentView) Size() uint64          { return v.size }
+func readAttachmentView(d *wireDecoder) (AttachmentView, error) {
+	var v AttachmentView
+	if err := cid(d, AttachmentCID); err != nil {
+		return v, err
+	}
+	var e error
+	if v.id, e = d.u64(); e != nil {
+		return v, e
+	}
+	if v.name, e = d.bytes(); e != nil {
+		return v, e
+	}
+	if v.mimeType, e = d.bytes(); e != nil {
+		return v, e
+	}
+	v.size, e = d.u64()
+	return v, e
+}
+
+type MapEntryView struct{ Key, Value []byte }
+type MessageView struct {
+	id, chatID  uint64
+	sender      UserView
+	text        []byte
+	attachments []AttachmentView
+	metadata    []MapEntryView
+}
+
+func (v MessageView) ID() uint64          { return v.id }
+func (v MessageView) ChatID() uint64      { return v.chatID }
+func (v MessageView) Sender() UserView    { return v.sender }
+func (v MessageView) TextBytes() []byte   { return v.text }
+func (v MessageView) AttachmentsLen() int { return len(v.attachments) }
+func (v MessageView) Attachment(i int) (AttachmentView, bool) {
+	if i < 0 || i >= len(v.attachments) {
+		return AttachmentView{}, false
+	}
+	return v.attachments[i], true
+}
+func (v MessageView) MetadataLen() int { return len(v.metadata) }
+func (v MessageView) Metadata(i int) (MapEntryView, bool) {
+	if i < 0 || i >= len(v.metadata) {
+		return MapEntryView{}, false
+	}
+	return v.metadata[i], true
+}
+func readMessageView(d *wireDecoder) (MessageView, error) {
+	var v MessageView
+	if err := cid(d, MessageCID); err != nil {
+		return v, err
+	}
+	var e error
+	if v.id, e = d.u64(); e != nil {
+		return v, e
+	}
+	if v.chatID, e = d.u64(); e != nil {
+		return v, e
+	}
+	if v.sender, e = readUserView(d); e != nil {
+		return v, e
+	}
+	if v.text, e = d.bytes(); e != nil {
+		return v, e
+	}
+	var n uint64
+	if n, e = d.varint(); e != nil {
+		return v, e
+	}
+	c, e := count(n)
+	if e != nil {
+		return v, e
+	}
+	v.attachments = make([]AttachmentView, c)
+	for i := range v.attachments {
+		if v.attachments[i], e = readAttachmentView(d); e != nil {
+			return v, e
+		}
+	}
+	if n, e = d.varint(); e != nil {
+		return v, e
+	}
+	c, e = count(n)
+	if e != nil {
+		return v, e
+	}
+	v.metadata = make([]MapEntryView, c)
+	for i := range v.metadata {
+		if v.metadata[i].Key, e = d.bytes(); e != nil {
+			return v, e
+		}
+		if v.metadata[i].Value, e = d.bytes(); e != nil {
+			return v, e
+		}
+	}
+	return v, nil
+}
+func BorrowMessage(wire []byte) (MessageView, error) {
+	d := wireDecoder{b: wire}
+	v, e := readMessageView(&d)
+	if e == nil {
+		e = d.done()
+	}
+	return v, e
+}
+
+type UpdateView interface{ isUpdateView() }
+type MessageCreatedView struct{ Message MessageView }
+
+func (MessageCreatedView) isUpdateView() {}
+
+type MessageEditedView struct {
+	ChatID, MessageID uint64
+	Text              []byte
+}
+
+func (MessageEditedView) isUpdateView() {}
+
+type UserJoinedView struct {
+	ChatID uint64
+	User   UserView
+}
+
+func (UserJoinedView) isUpdateView() {}
+func BorrowUpdate(wire []byte) (UpdateView, error) {
+	d := wireDecoder{b: wire}
+	c, e := d.take(8)
+	if e != nil {
+		return nil, e
+	}
+	switch string(c) {
+	case string([]byte{0x20, 0x50, 0xae, 0x79, 0xc1, 0x93, 0x2b, 0x3a}):
+		v, e := readMessageView(&d)
+		if e != nil {
+			return nil, e
+		}
+		if e = d.done(); e != nil {
+			return nil, e
+		}
+		return MessageCreatedView{v}, nil
+	case string([]byte{0x03, 0x60, 0xfb, 0x29, 0x95, 0x8d, 0xb3, 0x46}):
+		a, e := d.u64()
+		if e != nil {
+			return nil, e
+		}
+		m, e := d.u64()
+		if e != nil {
+			return nil, e
+		}
+		t, e := d.bytes()
+		if e != nil {
+			return nil, e
+		}
+		if e = d.done(); e != nil {
+			return nil, e
+		}
+		return MessageEditedView{a, m, t}, nil
+	case string([]byte{0x75, 0x81, 0xf3, 0xd0, 0xbf, 0x40, 0x67, 0xa2}):
+		a, e := d.u64()
+		if e != nil {
+			return nil, e
+		}
+		u, e := readUserView(&d)
+		if e != nil {
+			return nil, e
+		}
+		if e = d.done(); e != nil {
+			return nil, e
+		}
+		return UserJoinedView{a, u}, nil
+	default:
+		return nil, fmt.Errorf("unknown Update constructor")
+	}
+}

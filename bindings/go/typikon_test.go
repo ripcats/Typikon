@@ -68,3 +68,67 @@ func TestUserBorrowedValidation(t *testing.T) {
 		t.Fatal("invalid wire unexpectedly validated")
 	}
 }
+
+func TestUserBorrowedViewAliasesPacket(t *testing.T) {
+	wire, err := EncodeUser(User{Id: 7, Username: "ada", DisplayName: "Ada", Presence: Presence("Online"), Roles: []string{"admin"}})
+	if err != nil {
+		t.Fatalf("EncodeUser: %v", err)
+	}
+	view, err := BorrowUser(wire)
+	if err != nil {
+		t.Fatalf("BorrowUser: %v", err)
+	}
+	if string(view.UsernameBytes()) != "ada" || view.RolesLen() != 1 {
+		t.Fatalf("unexpected view: %#v", view)
+	}
+	pos := bytes.Index(wire, []byte("ada"))
+	if pos < 0 {
+		t.Fatal("username not found in packet")
+	}
+	wire[pos] = 'z'
+	if string(view.UsernameBytes()) != "zda" {
+		t.Fatalf("view does not alias packet: %q", view.UsernameBytes())
+	}
+	role, ok := view.RoleBytes(0)
+	if !ok || string(role) != "admin" {
+		t.Fatalf("role view = %q, %v", role, ok)
+	}
+}
+
+func TestBorrowedViewsCoverNestedAndEnumPayloads(t *testing.T) {
+	wire, err := EncodeMessage(Message{Id: 1, ChatId: 2, Sender: User{Id: 7, Username: "ada", DisplayName: "Ada", Presence: Presence("Online")}, Text: "hello", Attachments: []Attachment{{Id: 3, Name: "a.txt", MimeType: "text/plain", Size: 5}}, Metadata: map[string]string{"k": "v"}})
+	if err != nil {
+		t.Fatalf("EncodeMessage: %v", err)
+	}
+	message, err := BorrowMessage(wire)
+	if err != nil {
+		t.Fatalf("BorrowMessage: %v", err)
+	}
+	if string(message.TextBytes()) != "hello" || message.AttachmentsLen() != 1 || message.MetadataLen() != 1 {
+		t.Fatalf("unexpected message view")
+	}
+	updateWire, err := EncodeUpdate(UpdateMessageEdited{ChatId: 2, MessageId: 1, Text: "edit"})
+	if err != nil {
+		t.Fatalf("EncodeUpdate: %v", err)
+	}
+	update, err := BorrowUpdate(updateWire)
+	if err != nil {
+		t.Fatalf("BorrowUpdate: %v", err)
+	}
+	edited, ok := update.(MessageEditedView)
+	if !ok || string(edited.Text) != "edit" {
+		t.Fatalf("unexpected update view: %#v", update)
+	}
+}
+
+func TestBorrowedViewsRejectMalformedWire(t *testing.T) {
+	if _, err := BorrowUser([]byte{0xff}); err == nil {
+		t.Fatal("BorrowUser accepted malformed wire")
+	}
+	if _, err := BorrowMessage([]byte{0xff}); err == nil {
+		t.Fatal("BorrowMessage accepted malformed wire")
+	}
+	if _, err := BorrowUpdate([]byte{0xff}); err == nil {
+		t.Fatal("BorrowUpdate accepted malformed wire")
+	}
+}

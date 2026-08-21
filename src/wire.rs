@@ -53,21 +53,15 @@ impl Encoder {
         if value < 0x80 {
             return self.push(value as u8);
         }
-        loop {
-            let byte = if value >= 0x80 {
-                let b = (value as u8) | 0x80;
-                value >>= 7;
-                b
-            } else {
-                let byte = value as u8;
-                value = 0;
-                byte
-            };
-            self.push(byte)?;
-            if value == 0 {
-                return Ok(());
-            }
+        let mut encoded = [0u8; MAX_VARINT_BYTES];
+        let mut len = 0;
+        while value >= 0x80 {
+            encoded[len] = (value as u8) | 0x80;
+            value >>= 7;
+            len += 1;
         }
+        encoded[len] = value as u8;
+        self.extend(&encoded[..=len])
     }
     #[inline]
     pub fn u8(&mut self, value: u8) -> Result<(), WireError> {
@@ -176,6 +170,9 @@ impl<'a> Decoder<'a> {
             }
             result |= u64::from(byte & 0x7f) << shift;
             if byte & 0x80 == 0 {
+                if byte == 0 {
+                    return Err(WireError::InvalidVarInt);
+                }
                 return Ok(result);
             }
         }
@@ -346,7 +343,7 @@ impl<T: WireCodec> WireCodec for Vec<T> {
         Ok(())
     }
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self, WireError> {
-        let count = decoder.varint()? as usize;
+        let count = usize::try_from(decoder.varint()?).map_err(|_| WireError::IntegerOverflow)?;
         if count > decoder.max_size {
             return Err(WireError::PacketTooLarge);
         }
@@ -368,7 +365,7 @@ impl<K: WireCodec + Ord, V: WireCodec> WireCodec for BTreeMap<K, V> {
         Ok(())
     }
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self, WireError> {
-        let count = decoder.varint()? as usize;
+        let count = usize::try_from(decoder.varint()?).map_err(|_| WireError::IntegerOverflow)?;
         if count > decoder.max_size {
             return Err(WireError::PacketTooLarge);
         }
@@ -423,6 +420,19 @@ mod tests {
             assert_eq!(decoder.varint().unwrap(), state);
             assert!(decoder.is_finished());
         }
+    }
+
+    #[test]
+    fn rejects_non_canonical_varints_without_partial_writes() {
+        for bytes in [&[0x80, 0x00][..], &[0x81, 0x00], &[0xff, 0x00]] {
+            let mut decoder = Decoder::new(bytes, LIMIT).unwrap();
+            assert_eq!(decoder.varint(), Err(WireError::InvalidVarInt));
+        }
+
+        let mut encoder = Encoder::new(1);
+        assert_eq!(encoder.varint(128), Err(WireError::PacketTooLarge));
+        encoder.u8(7).unwrap();
+        assert_eq!(encoder.finish().unwrap(), [7]);
     }
 
     #[test]

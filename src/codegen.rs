@@ -236,7 +236,7 @@ fn generate_borrowed_struct(item: &Struct, schema: &Schema, output: &mut String)
         ));
     }
     output.push_str("}\n");
-    output.push_str(&format!("impl<'a> {}Ref<'a> {{ pub fn decode_borrowed(bytes: &'a [u8]) -> Result<Self, typikon::WireError> {{ typikon::decode_borrowed_value(bytes) }} }}\n", item.name));
+    output.push_str(&format!("impl<'a> {}Ref<'a> {{ pub fn decode_borrowed(bytes: &'a [u8]) -> Result<Self, typikon::WireError> {{ typikon::decode_borrowed_value(bytes) }} pub fn decode_borrowed_with_limits(bytes: &'a [u8], limits: typikon::DecodeLimits) -> Result<Self, typikon::WireError> {{ typikon::decode_borrowed_value_with_limits(bytes, limits) }} }}\n", item.name));
     output.push_str(&format!(
         "impl<'a> typikon::BorrowedWireCodec<'a> for {}Ref<'a> {{\n",
         item.name
@@ -510,7 +510,7 @@ fn generate_borrowed_enum(item: &Enum, schema: &Schema, output: &mut String) {
         }
     }
     output.push_str("}\n");
-    output.push_str(&format!("impl<'a> {}Ref<'a> {{ pub fn decode_borrowed(bytes: &'a [u8]) -> Result<Self, typikon::WireError> {{ typikon::decode_borrowed_value(bytes) }} }}\n", item.name));
+    output.push_str(&format!("impl<'a> {}Ref<'a> {{ pub fn decode_borrowed(bytes: &'a [u8]) -> Result<Self, typikon::WireError> {{ typikon::decode_borrowed_value(bytes) }} pub fn decode_borrowed_with_limits(bytes: &'a [u8], limits: typikon::DecodeLimits) -> Result<Self, typikon::WireError> {{ typikon::decode_borrowed_value_with_limits(bytes, limits) }} }}\n", item.name));
     output.push_str(&format!(
         "impl<'a> typikon::BorrowedWireCodec<'a> for {}Ref<'a> {{\n",
         item.name

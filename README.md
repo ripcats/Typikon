@@ -40,7 +40,7 @@ Typikon задуман как кроссплатформенный проток�
 | VarInt, коллекции и Map | Компактное и детерминированное кодирование |
 | Layer negotiation | Явная проверка совместимости схем |
 | Rust code generation | Единая реализация encode/decode |
-| Языковые адаптеры | Python через PyO3, Go через cgo, TypeScript через Node-API |
+| Языковые адаптеры | Python через PyO3, Go native wire codec + cgo validation, TypeScript typed wire codec + Node-API validation |
 | Строгая валидация и лимиты | Предсказуемое поведение на повреждённом вводе |
 
 ## Быстрый старт

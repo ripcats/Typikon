@@ -456,7 +456,54 @@ fn generate_typescript_typed_item(item: &Item, schema: &Schema, output: &mut Str
             output.push_str(" default: throw new Error('invalid enum'); } }\n");
             output.push_str(&format!("export function encode{name}(value: {name}): Uint8Array {{ const e = new WireEncoder(); write_{}(e, value); return e.finish(); }}\nexport function decode{name}(wire: Uint8Array): {name} {{ const d = new WireDecoder(wire); const value = read_{}(d); d.done(); return value; }}\n\n", name.to_ascii_lowercase(), name.to_ascii_lowercase()));
         }
-        Item::Enum(_) => {}
+        Item::Enum(en) => {
+            let name = &en.name;
+            let lower = name.to_ascii_lowercase();
+            output.push_str(&format!(
+                "function write_{lower}(e: WireEncoder, value: {name}): void {{"
+            ));
+            for variant in &en.variants {
+                let cid = variant
+                    .cid
+                    .clone()
+                    .unwrap_or_else(|| variant_cid(en, variant));
+                output.push_str(&format!(
+                    " if (\"{}\" in value) {{ e.raw(hex(\"{}\"));",
+                    variant.name, cid
+                ));
+                for field in &variant.fields {
+                    typescript_encode_type(
+                        &field.ty,
+                        &format!("value.{}.{}", variant.name, field.name),
+                        schema,
+                        output,
+                    );
+                }
+                output.push_str(" return; }");
+            }
+            output.push_str(" throw new Error('unknown variant'); }\n");
+            output.push_str(&format!(
+                "function read_{lower}(d: WireDecoder): {name} {{ const c = d.take(8);"
+            ));
+            for variant in &en.variants {
+                let cid = variant
+                    .cid
+                    .clone()
+                    .unwrap_or_else(|| variant_cid(en, variant));
+                output.push_str(&format!(
+                    " if (c.every((x, i) => x === hex(\"{}\")[i])) {{ return {{ {}: {{",
+                    cid, variant.name
+                ));
+                for field in &variant.fields {
+                    output.push_str(&format!(" {}: ", field.name));
+                    typescript_decode_expression(&field.ty, schema, output);
+                    output.push(',');
+                }
+                output.push_str(" } }; }");
+            }
+            output.push_str(" throw new Error('unknown constructor'); }\n");
+            output.push_str(&format!("export function encode{name}(value: {name}): Uint8Array {{ const e = new WireEncoder(); write_{lower}(e, value); return e.finish(); }}\nexport function decode{name}(wire: Uint8Array): {name} {{ const d = new WireDecoder(wire); const value = read_{lower}(d); d.done(); return value; }}\n\n"));
+        }
     }
 }
 
@@ -547,6 +594,27 @@ fn typescript_decode_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut Strin
             ));
             typescript_decode_type(value, &format!("{}[key]", lhs), schema, out);
             out.push_str(" }");
+        }
+    }
+}
+fn typescript_decode_expression(ty: &Type, schema: &Schema, out: &mut String) {
+    match ty {
+        Type::Primitive(n) => {
+            if schema.items.iter().any(|i| item_name(i) == n) {
+                out.push_str(&format!("read_{}(d)", n.to_ascii_lowercase()));
+            } else {
+                out.push_str(&format!("d.{}()", typescript_wire_method(n)));
+            }
+        }
+        Type::Vec(item) => {
+            out.push_str("Array.from({ length: d.varint() }, () => ");
+            typescript_decode_expression(item, schema, out);
+            out.push(')');
+        }
+        Type::Map(_, value) => {
+            out.push_str("Object.fromEntries(Array.from({ length: d.varint() }, () => { const key = d.string(); return [key, ");
+            typescript_decode_expression(value, schema, out);
+            out.push_str("]; }))");
         }
     }
 }

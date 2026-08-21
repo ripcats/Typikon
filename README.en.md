@@ -3,7 +3,7 @@
 ![Typikon Protocol](assets/cover.png)
 
 [![Version](https://img.shields.io/badge/Version-Beta-5865F2?style=for-the-badge&logo=github&logoColor=white)](#what-is-actually-tested)
-[![Tests](https://img.shields.io/badge/Tests-62%20Passing-3FB950?style=for-the-badge&logo=githubactions&logoColor=white)](#what-is-actually-tested)
+[![Tests](https://img.shields.io/badge/Tests-64%20Passing-3FB950?style=for-the-badge&logo=githubactions&logoColor=white)](#what-is-actually-tested)
 [![Русский](https://img.shields.io/badge/%D0%A0%D1%83%D1%81%D1%81%D0%BA%D0%B8%D0%B9-2D333B?style=for-the-badge&logo=libretranslate&logoColor=white)](README.md)
 [![Evgeny Gerber](https://img.shields.io/badge/Evgeny%20Gerber-2AABEE?style=for-the-badge&logo=telegram&logoColor=white)](https://ripcats.t.me)
 
@@ -129,7 +129,7 @@ Supported types:
 | Collections | `Vec<T>`, `Map<K, V>` |
 | User-defined types | `struct`, `enum`, and flags names |
 
-`Vec<T>` can be nested: `Vec<Vec<u8>>`, `Map<String, Vec<Message>>`. A `Map<K, V>` key must be primitive, except `f32` and `f64`; pairs are encoded in sorted order.
+`Vec<T>` can be nested: `Vec<Vec<u8>>`, `Map<String, Vec<Message>>`. A `Map<K, V>` key must be primitive, except `f32` and `f64`; pairs are encoded in sorted order. Violating this rule produces a semantic-validation error during `parse_schema`, never a parser panic.
 
 For transport-level framing, `Encoder` also provides `write_vectored`: a header, packet, and trailer can be sent with one vectored write without an intermediate concatenation. The API is transport-neutral and works for TCP+TLS adapters; QUIC, WebSocket, and WebTransport can use the same packet buffer with their own message/frame boundaries.
 
@@ -220,7 +220,7 @@ AST constructor → canonical form → BLAKE3
               → first 16 hex characters → 8 raw bytes on the wire
 ~~~
 
-The canonical form includes the constructor name, field order, types, and guard conditions. Source formatting and comments do not affect the C-ID; the Layer is not part of it. The fingerprint uses BLAKE3 — the project’s only cryptographic dependency.
+The canonical form includes the constructor name, field order, types, and guard conditions. Source formatting and comments do not affect the C-ID; the Layer is not part of it so constructor identity remains shared across independent Layers. C-IDs currently occupy 64 bits: sufficient for beta and local schemas, but a public global registry would eventually need a namespace or an expanded format.
 
 ~~~text
 [8 raw C-ID bytes][encoded fields]
@@ -251,7 +251,7 @@ messenger-10.ts              TypeScript facade
 
 The generated Rust core is the only schema-specific implementation of binary encode/decode. The shared runtime lives in [`src/wire.rs`](src/wire.rs), [`src/codec.rs`](src/codec.rs), [`src/constructor.rs`](src/constructor.rs), and related modules.
 
-- **Python** — PyO3 with direct dict/list/scalar conversion through `pythonize`.
+- **Python** — an installable PyO3 package (`python -m pip install -e bindings/python`) with direct dict/list/scalar conversion through `pythonize`; packet ownership is available through `BorrowedPacket`.
 - **Go** — cgo over the generated C ownership/error ABI.
 - **TypeScript** — a Node-API native addon with a typed facade.
 
@@ -267,17 +267,17 @@ assert_eq!(support.negotiate(8), Ok(8));
 assert!(support.negotiate(9).is_err());
 ~~~
 
-Only a Layer with a compiled backend is supported. Otherwise the runtime returns `LayerVersionNotSupported`. There is no Layer inheritance, `extends`, `@since`, or implicit version range.
+Only a Layer with a compiled backend is supported. Otherwise the runtime returns `LayerVersionNotSupported`. There is no Layer inheritance, `extends`, `@since`, or implicit version range. The separate `is_backward_compatible(old, new)` function is an opt-in developer migration audit; it does not make Layers an inheritance chain and is not part of Layer negotiation.
 
 ## Idea and intended scope
 
 Typikon is an original schema-driven binary protocol implementation, inspired by **[TL](https://github.com/gotd/td)** and **[Protocol Buffers](https://github.com/protocolbuffers/protobuf)**. It is primarily aimed at messenger-like systems where compact messages, explicit Layer versions, stable Constructor IDs, conditional fields, and one wire contract across several languages matter.
 
-Transport and application logic intentionally remain a separate layer. Typikon focuses on schemas, wire encoding, Layer compatibility, and generated adapters. The Python binding builds, but its package/install workflow is not finalized; the Go and TypeScript native crates build separately.
+Transport and application logic intentionally remain a separate layer. Typikon focuses on schemas, wire encoding, Layer compatibility, and generated adapters. The Python binding installs through `python -m pip install -e bindings/python`; the Go and TypeScript native crates build separately.
 
 ## What is actually tested
 
-The Rust suite contains **62 tests: 57 unit tests and 5 integration tests** covering parsing and semantic validation, code generation, the CLI, Layer/C-ID handling, wire round-trips, limits, malformed input, maps, VarInt, borrowed views, language-view generation, vectored writes, randomized inputs, and FlatBuffers round-trip comparison.
+The Rust suite contains **64 tests: 59 unit tests and 5 integration tests** covering parsing and semantic validation, code generation, the CLI, Layer/C-ID handling, wire round-trips, limits, malformed input, maps, VarInt, borrowed views, language-view generation, vectored writes, randomized inputs, and FlatBuffers round-trip comparison.
 
 Python/Go/TypeScript bindings, ownership/aliasing, lazy iteration, duplicate/unsorted maps, the cross-language round-trip, and semantic parity with FlatBuffers are also checked (`cargo test --test flatbuffers_comparison`, `(cd bindings/typescript && npm test)`, `go test ./bindings/go`, `./tests/cross_language_roundtrip.sh`, `./tests/generated_go_views.sh`). Benchmarks are available through `cargo bench --bench wire` and `cargo bench --bench compare`; they measure wire size, encoding/decoding, borrowed views, and allocations, but are not network benchmarks. Long-running validation is separate: `TYPIKON_STRESS_SECONDS=172800 ./tests/long_validation.sh`.
 

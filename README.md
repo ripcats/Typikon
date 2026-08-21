@@ -3,7 +3,7 @@
 ![Typikon Protocol](assets/cover.png)
 
 [![Версия](https://img.shields.io/badge/%D0%92%D0%B5%D1%80%D1%81%D0%B8%D1%8F-Beta-5865F2?style=for-the-badge&logo=github&logoColor=white)](#что-реально-проверено)
-[![Тесты](https://img.shields.io/badge/%D0%A2%D0%B5%D1%81%D1%82%D1%8B-62%20%D0%BF%D1%80%D0%BE%D0%B9%D0%B4%D0%B5%D0%BD%D0%BD%D1%8B%D1%85-3FB950?style=for-the-badge&logo=githubactions&logoColor=white)](#что-реально-проверено)
+[![Тесты](https://img.shields.io/badge/%D0%A2%D0%B5%D1%81%D1%82%D1%8B-64%20%D0%BF%D1%80%D0%BE%D0%B9%D0%B4%D0%B5%D0%BD%D0%BD%D1%8B%D1%85-3FB950?style=for-the-badge&logo=githubactions&logoColor=white)](#что-реально-проверено)
 [![English](https://img.shields.io/badge/English-2D333B?style=for-the-badge&logo=libretranslate&logoColor=white)](README.en.md)
 [![Evgeny Gerber](https://img.shields.io/badge/Evgeny%20Gerber-2AABEE?style=for-the-badge&logo=telegram&logoColor=white)](https://ripcats.t.me)
 
@@ -129,7 +129,7 @@ struct Attachment {
 | Коллекции | `Vec<T>`, `Map<K, V>` |
 | Пользовательские типы | имена `struct`, `enum` и flags |
 
-`Vec<T>` может быть вложенным: `Vec<Vec<u8>>`, `Map<String, Vec<Message>>`. Ключ `Map<K, V>` должен быть primitive-типом, кроме `f32` и `f64`; пары кодируются в отсортированном порядке.
+`Vec<T>` может быть вложенным: `Vec<Vec<u8>>`, `Map<String, Vec<Message>>`. Ключ `Map<K, V>` должен быть primitive-типом, кроме `f32` и `f64`; пары кодируются в отсортированном порядке. Нарушение этого правила даёт semantic-validation error на этапе `parse_schema`, без паники.
 
 Для transport-level framing `Encoder` также предоставляет `write_vectored`: header, packet и trailer можно отправить через один vectored write без промежуточной конкатенации. API не привязан к TCP и подходит для TCP+TLS-адаптеров; QUIC, WebSocket и WebTransport могут использовать тот же готовый packet buffer и собственные message/frame boundaries.
 
@@ -220,7 +220,7 @@ AST constructor → canonical form → BLAKE3
               → первые 16 hex-символов → 8 raw bytes на wire
 ~~~
 
-Canonical form учитывает имя constructor’а, порядок полей, типы и guard-условия. Форматирование и комментарии не влияют на C-ID; Layer в него не входит. Для fingerprint используется BLAKE3 — единственная криптографическая зависимость проекта.
+Canonical form учитывает имя constructor’а, порядок полей, типы и guard-условия. Форматирование и комментарии не влияют на C-ID; Layer в него не входит, чтобы identity constructor’а оставалась общей между независимыми Layer. C-ID сейчас занимает 64 бита: для beta и локальной схемы этого достаточно, но публичный глобальный registry при росте экосистемы потребует namespace или расширенного формата.
 
 ~~~text
 [8 raw C-ID bytes][encoded fields]
@@ -251,7 +251,7 @@ messenger-10.ts              TypeScript facade
 
 Единственная schema-specific реализация binary encode/decode находится в generated Rust core. Общий runtime — в [`src/wire.rs`](src/wire.rs), [`src/codec.rs`](src/codec.rs), [`src/constructor.rs`](src/constructor.rs) и связанных модулях.
 
-- **Python** — PyO3 и прямое преобразование dict/list/scalar через `pythonize`.
+- **Python** — устанавливаемый PyO3-пакет (`python -m pip install -e bindings/python`) и прямое преобразование dict/list/scalar через `pythonize`; packet ownership доступен через `BorrowedPacket`.
 - **Go** — schema-specific native Go wire codec; cgo остаётся для ABI и borrowed validation.
 - **TypeScript** — typed direct wire codec и Node-API native validation addon.
 
@@ -267,17 +267,17 @@ assert_eq!(support.negotiate(8), Ok(8));
 assert!(support.negotiate(9).is_err());
 ~~~
 
-Поддержан только Layer, для которого реально собран backend. Иначе runtime возвращает `LayerVersionNotSupported`. Наследования Layer, `extends`, `@since` и неявного диапазона версий нет.
+Поддержан только Layer, для которого реально собран backend. Иначе runtime возвращает `LayerVersionNotSupported`. Наследования Layer, `extends`, `@since` и неявного диапазона версий нет. Отдельная `is_backward_compatible(old, new)` — opt-in developer-проверка миграции схем; она не превращает Layer в наследуемую цепочку и не участвует в Layer negotiation.
 
 ## Идея и область применения
 
 Typikon — собственная schema-driven реализация бинарного протокола, вдохновлённая **[TL](https://github.com/gotd/td)** и **[Protocol Buffers](https://github.com/protocolbuffers/protobuf)**. Проект рассчитан прежде всего на messenger-подобные системы, где важны компактные сообщения, явные версии Layer, стабильные Constructor ID, условные поля и один wire-контракт для нескольких языков.
 
-Транспорт и прикладная логика в Typikon намеренно остаются отдельным уровнем. Здесь — схема, wire-кодирование, совместимость Layer и генерация адаптеров. Python binding собирается, но package/install workflow ещё не оформлен; native crates Go и TypeScript собираются отдельно.
+Транспорт и прикладная логика в Typikon намеренно остаются отдельным уровнем. Здесь — схема, wire-кодирование, совместимость Layer и генерация адаптеров. Python binding устанавливается через `python -m pip install -e bindings/python`; native crates Go и TypeScript собираются отдельно.
 
 ## Что реально проверено
 
-Rust suite включает **62 теста: 57 unit и 5 integration** — parser и semantic validation, code generation, CLI, Layer/C-ID, wire round-trips, limits, malformed input, maps, VarInt, borrowed views, language-view generation, vectored writes, randomized inputs и round-trip сравнение с FlatBuffers.
+Rust suite включает **64 теста: 59 unit и 5 integration** — parser и semantic validation, code generation, CLI, Layer/C-ID, wire round-trips, limits, malformed input, maps, VarInt, borrowed views, language-view generation, vectored writes, randomized inputs и round-trip сравнение с FlatBuffers.
 
 Дополнительно проверяются Python/Go/TypeScript bindings, owner/aliasing, lazy iteration, duplicate/unsorted maps, cross-language round-trip и semantic parity с FlatBuffers (`cargo test --test flatbuffers_comparison`, `(cd bindings/typescript && npm test)`, `go test ./bindings/go`, `./tests/cross_language_roundtrip.sh`, `./tests/generated_go_views.sh`). Benchmarks: `cargo bench --bench wire` и `cargo bench --bench compare`; они измеряют wire size, encode/decode, borrowed views и allocations, но не являются сетевым benchmark. Длительная проверка запускается отдельно: `TYPIKON_STRESS_SECONDS=172800 ./tests/long_validation.sh`.
 

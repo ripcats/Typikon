@@ -160,3 +160,26 @@ fn error(message: &str) -> ParseError {
         position: 0,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::parse_schema;
+
+    #[test]
+    fn rejects_float_map_keys_as_a_schema_error() {
+        for key in ["f32", "f64"] {
+            let source = format!("#[version(1)] struct Message {{ values: Map<{key}, String>, }}");
+            let error = parse_schema(&source).unwrap_err();
+            assert_eq!(error.message, "map key must be an orderable primitive type");
+        }
+    }
+
+    #[test]
+    fn rejects_non_primitive_map_keys_without_panicking() {
+        let error = parse_schema(
+            "#[version(1)] struct Key { id: u64, } struct Message { values: Map<Key, String>, }",
+        )
+        .unwrap_err();
+        assert_eq!(error.message, "map key must be an orderable primitive type");
+    }
+}

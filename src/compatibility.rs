@@ -13,6 +13,10 @@ pub enum CompatibilityError {
 /// Existing constructors and fields remain positional and their Constructor IDs
 /// are part of the wire contract, so changing them is rejected. New top-level
 /// items, enum variants, and flag bits are safe for an old-to-new transition.
+///
+/// This is an opt-in schema migration audit. It is intentionally separate from
+/// Layer negotiation: Layers remain independent artifacts and are never
+/// implicitly treated as an inheritance chain.
 pub fn is_backward_compatible(old: &Schema, new: &Schema) -> Result<(), CompatibilityError> {
     for old_item in &old.items {
         let name = item_name(old_item);

@@ -41,6 +41,9 @@ All notable changes to Typikon since its initial public beta are documented here
 - Expanded cross-language regressions for typed packet ownership, aliasing, duplicate map keys, and malformed collection input.
 - Clarified the Python zero-copy boundary: packet ownership is exposed safely, while typed Python objects remain materialized.
 - Added integration tests comparing Typikon and FlatBuffers round-trips, borrowed/view checks, sizes, and truncated-input rejection.
+- Added installable Python package metadata and a safe generic `BorrowedPacket` facade.
+- Documented Layer migration audits, 64-bit C-ID scope, and explicit Map key validation errors.
+- Added schema-level regression tests proving invalid Map keys return validation errors without panics.
 
 ### Changed
 

@@ -167,8 +167,7 @@ impl<'a> Decoder<'a> {
         if first < 0x80 {
             return Ok(u64::from(first));
         }
-        let mut result = 0u64;
-        result = u64::from(first & 0x7f);
+        let mut result = u64::from(first & 0x7f);
         for index in 1..MAX_VARINT_BYTES {
             let byte = self.read_u8()?;
             let shift = index * 7;

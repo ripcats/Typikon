@@ -26,7 +26,7 @@ schema.typ
     └── generated Python / Go / TypeScript adapters
 ~~~
 
-На wire остаются бинарные данные. JSON используется только на границе языка и native-кода, когда это удобно адаптеру; JSON не является форматом Typikon.
+На wire остаются бинарные данные. JSON не участвует в typed Go и TypeScript codec paths и не является форматом Typikon; Python binding также передаёт значения через PyO3/pythonize без JSON-сериализации.
 
 Typikon задуман как кроссплатформенный протокол. На текущем этапе проект официально предоставляет адаптеры для **Python**, **Go** и **TypeScript**; в дальнейшем список реализаций может расширяться сообществом и новыми официальными bindings.
 
@@ -263,10 +263,10 @@ messenger-10.ts              TypeScript facade
 Единственная schema-specific реализация binary encode/decode находится в generated Rust core. Общий runtime — в [`src/wire.rs`](src/wire.rs), [`src/codec.rs`](src/codec.rs), [`src/constructor.rs`](src/constructor.rs) и связанных модулях.
 
 - **Python** — PyO3 и прямое преобразование dict/list/scalar через `pythonize`.
-- **Go** — cgo-обёртка над сгенерированным C ownership/error ABI.
-- **TypeScript** — Node-API native addon и типизированный facade.
+- **Go** — schema-specific native Go wire codec; cgo остаётся для ABI и borrowed validation.
+- **TypeScript** — typed direct wire codec и Node-API native validation addon.
 
-Все адаптеры используют один Rust wire core. Go и TypeScript принимают JSON только на language/native boundary; бинарный wire-формат от этого не меняется.
+Все адаптеры используют один wire contract. Go codec генерируется как прямой native Go encoder/decoder, TypeScript — как typed wire codec с native Node-API validation, Python — через прямую PyO3-конверсию.
 
 ## Layer и совместимость
 

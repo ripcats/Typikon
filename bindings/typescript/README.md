@@ -11,4 +11,4 @@ npm ci
 npm run build
 ```
 
-The public native module exposes ABI/Layer negotiation, binary `encodeBinary(layer, typeName, input)` / `decodeBinary(...)`, and `validateBinary(layer, typeName, input)`. `validateBinary` runs the generated checked borrowed decoder without materializing an owned object; the caller retains the original `Uint8Array`. Unknown types, unsupported Layers, and invalid wire bytes become Node errors.
+The generated TypeScript module exposes typed `encode<Name>(value)` / `decode<Name>(wire)` functions that write and read Typikon bytes directly. The native module remains a binary boundary: `encodeBinary(layer, typeName, input)` / `decodeBinary(...)` validate and pass through wire bytes, while `validateBinary(...)` runs the checked borrowed decoder without materializing an owned object. JSON is not used by either path.

@@ -9,12 +9,22 @@ trap 'rm -rf "$temp_dir"' EXIT
 
 cargo build --quiet --manifest-path "$repo_dir/bindings/python/Cargo.toml"
 cargo build --quiet --manifest-path "$repo_dir/bindings/typescript/native/Cargo.toml"
+cargo run --quiet --manifest-path "$repo_dir/Cargo.toml" -- compile "$repo_dir/examples/messenger.typ" --out-dir "$temp_dir/generated" --target typescript
+mkdir -p "$temp_dir/generated-js"
+"$repo_dir/bindings/typescript/node_modules/.bin/tsc" --target ES2022 --module commonjs --outDir "$temp_dir/generated-js" "$temp_dir/generated/messenger-10.ts"
 
 ln -s "$repo_dir/bindings/python/target/debug/libtypikon_python.so" "$temp_dir/typikon_python.so"
 python_wire="$(TYPIKON_VALUE="$json" PYTHONPATH="$temp_dir" python3 -c 'import json, os, typikon_python; print(typikon_python.encode_user(json.loads(os.environ["TYPIKON_VALUE"])).hex())')"
 test "$python_wire" = "$expected"
 
 cp "$repo_dir/bindings/typescript/native/target/debug/libtypikon_typescript_native.so" "$temp_dir/typikon_typescript_native.node"
+typed_node_wire="$(node - "$temp_dir/generated-js/messenger-10.js" <<'JS'
+const m = require(process.argv[2]);
+const wire = m.encodeUser({id: 7, username: "ada", display_name: "Ada", flags: 0, presence: "Online", roles: []});
+process.stdout.write(Buffer.from(wire).toString("hex"));
+JS
+)"
+test "$typed_node_wire" = "$expected"
 node_wire="$(node - "$temp_dir/typikon_typescript_native.node" <<'JS'
 const n = require(process.argv[2]);
 const wire = Buffer.from("acb38da67a712058070000000000000003616461034164610000000000000000000000", "hex");

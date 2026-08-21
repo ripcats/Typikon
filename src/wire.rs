@@ -187,6 +187,9 @@ impl<'a> Decoder<'a> {
     pub fn is_finished(&self) -> bool {
         self.position == self.bytes.len()
     }
+    pub fn remaining(&self) -> usize {
+        self.bytes.len() - self.position
+    }
     #[inline]
     pub fn varint(&mut self) -> Result<u64, WireError> {
         let first = self.read_u8()?;
@@ -387,7 +390,19 @@ impl<T: WireCodec> WireCodec for Vec<T> {
         if count > decoder.max_size {
             return Err(WireError::PacketTooLarge);
         }
-        let mut result = Vec::with_capacity(count.min(1024));
+        let capacity = match T::FIXED_ENCODED_LEN {
+            Some(item_size) => {
+                let required = count
+                    .checked_mul(item_size)
+                    .ok_or(WireError::IntegerOverflow)?;
+                if required > decoder.remaining() {
+                    return Err(WireError::UnexpectedEof);
+                }
+                count
+            }
+            None => count.min(1024),
+        };
+        let mut result = Vec::with_capacity(capacity);
         for _ in 0..count {
             result.push(T::decode(decoder)?);
         }
@@ -417,6 +432,17 @@ impl<K: WireCodec + Ord, V: WireCodec> WireCodec for BTreeMap<K, V> {
         let count = usize::try_from(decoder.varint()?).map_err(|_| WireError::IntegerOverflow)?;
         if count > decoder.max_size {
             return Err(WireError::PacketTooLarge);
+        }
+        if let (Some(key_size), Some(value_size)) = (K::FIXED_ENCODED_LEN, V::FIXED_ENCODED_LEN) {
+            let pair_size = key_size
+                .checked_add(value_size)
+                .ok_or(WireError::IntegerOverflow)?;
+            let required = count
+                .checked_mul(pair_size)
+                .ok_or(WireError::IntegerOverflow)?;
+            if required > decoder.remaining() {
+                return Err(WireError::UnexpectedEof);
+            }
         }
         let mut result = BTreeMap::new();
         for _ in 0..count {
@@ -659,6 +685,16 @@ mod tests {
         let mut decoder = Decoder::new(&[3, 1, 2], LIMIT).unwrap();
         assert_eq!(
             Vec::<u8>::decode(&mut decoder),
+            Err(WireError::UnexpectedEof)
+        );
+        let mut decoder = Decoder::new(&[100], LIMIT).unwrap();
+        assert_eq!(
+            Vec::<u64>::decode(&mut decoder),
+            Err(WireError::UnexpectedEof)
+        );
+        let mut decoder = Decoder::new(&[10], LIMIT).unwrap();
+        assert_eq!(
+            BTreeMap::<u64, u64>::decode(&mut decoder),
             Err(WireError::UnexpectedEof)
         );
     }

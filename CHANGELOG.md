@@ -25,6 +25,8 @@ All notable changes to Typikon since its initial public beta are documented here
 - Python, TypeScript, and Go golden wire round-trip checks.
 - Expanded malformed-input, collection preflight, canonical VarInt, borrowed-storage, and fuzz coverage.
 - Added runtime coverage for freshly generated Go borrowed views, including nested values, enum payloads, aliasing, and truncated wire.
+- Added an owner-preserving TypeScript native `borrowBinary` entry point and Python `BorrowedPacket` wrappers for validated packet-backed access.
+- Added generated Go `*LazyView` and TypeScript `decode*LazyView` collection APIs that rescan packet-backed ranges instead of allocating element metadata.
 
 ### Changed
 

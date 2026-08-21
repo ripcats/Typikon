@@ -11,7 +11,7 @@
 
 Define the contract in a human-readable `.typ` schema — Typikon validates its semantics and produces a schema-specific Rust wire core, a public schema with computed **Constructor ID (C-ID)** values, and official cross-platform adapters for Python, Go, and TypeScript.
 
-The Rust core supports zero-copy borrowed views for strings, bytes, and collections, while language adapters expose view or memoryview APIs within the ownership model of each runtime.
+The Rust core supports zero-copy borrowed views for strings, bytes, and lazy collections; Go and TypeScript also generate packet-backed lazy collection APIs, while Python keeps an owner-backed packet `memoryview` within its runtime model.
 
 > **Beta release.** The project builds, runs tests, and generates working artifacts, but the protocol format and C-ID rules may still change.
 
@@ -255,7 +255,7 @@ The generated Rust core is the only schema-specific implementation of binary enc
 - **Go** — cgo over the generated C ownership/error ABI.
 - **TypeScript** — a Node-API native addon with a typed facade.
 
-All adapters use one wire contract. Go is generated as a direct native encoder/decoder with borrowed views, TypeScript as a typed wire codec with native Node-API validation and borrowed views, and Python through direct PyO3 conversion with a packet-level `memoryview`.
+All adapters use one wire contract. Go is generated as a direct native encoder/decoder with borrowed and lazy views, TypeScript as a typed wire codec with lazy views and native Node-API `borrowBinary`, and Python through direct PyO3 conversion with an owner-backed packet `memoryview`.
 
 ## Layers and compatibility
 
@@ -279,7 +279,7 @@ Transport and application logic intentionally remain a separate layer. Typikon f
 
 The Rust suite contains **60 tests: 57 unit tests and 3 integration tests** covering parsing and semantic validation, code generation, the CLI, Layer/C-ID handling, wire round-trips, limits, malformed input, maps, VarInt, borrowed views, language-view generation, vectored writes, and randomized inputs.
 
-Python/Go/TypeScript bindings and the cross-language round-trip are also checked (`npm test`, `go test ./bindings/go`). Benchmarks are available through `cargo bench --bench wire` and `cargo bench --bench compare`; they measure wire size, encoding/decoding, borrowed views, and allocations, but are not network benchmarks. For long-running validation, use `TYPIKON_STRESS_SECONDS=172800 ./tests/long_validation.sh`.
+Python/Go/TypeScript bindings and the cross-language round-trip are also checked (`npm test`, `go test ./bindings/go`, `./tests/cross_language_roundtrip.sh`, `./tests/generated_go_views.sh`). Benchmarks are available through `cargo bench --bench wire` and `cargo bench --bench compare`; they measure wire size, encoding/decoding, borrowed views, and allocations, but are not network benchmarks. For long-running validation, use `TYPIKON_STRESS_SECONDS=172800 ./tests/long_validation.sh`.
 
 ## Repository layout
 

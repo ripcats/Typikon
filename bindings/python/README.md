@@ -6,4 +6,4 @@ The Python backend is a PyO3 extension. Its build script reads `TYPIKON_SCHEMA` 
 cargo build --manifest-path bindings/python/Cargo.toml
 ```
 
-The generated module exposes direct PyO3 encode/decode and `validate_borrowed_<type>` functions for every schema item. The validation path checks the packet using generated borrowed views where available and does not materialize the decoded object. Python dictionaries, lists, and scalar values are converted directly to generated Rust values with `pythonize`; JSON serialization is not used at the Python/Rust boundary. Wire encoding remains implemented by the generated native Rust backend.
+The generated module exposes direct PyO3 encode/decode, `validate_borrowed_<type>`, `borrowed_<type>`, and `borrowed_packet_<type>` functions for every schema item. `BorrowedPacket` owns the packet-backed `memoryview` and its type name; Python strings, lists, and dictionaries remain materialized because of Python object ownership semantics. JSON serialization is not used at the Python/Rust boundary.

@@ -11,4 +11,4 @@ npm ci
 npm run build
 ```
 
-The generated TypeScript module exposes typed `encode<Name>(value)` / `decode<Name>(wire)` functions that write and read Typikon bytes directly. The native module remains a binary boundary: `encodeBinary(layer, typeName, input)` / `decodeBinary(...)` validate and pass through wire bytes, while `validateBinary(...)` runs the checked borrowed decoder without materializing an owned object. JSON is not used by either path.
+The generated TypeScript module exposes typed `encode<Name>(value)` / `decode<Name>(wire)` functions and `decode<Name>LazyView(wire)` packet-backed lazy collections. The native module exposes `encodeBinary`, `decodeBinary`, `validateBinary`, and owner-preserving `borrowBinary`; JSON is not used by either path.

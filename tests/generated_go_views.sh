@@ -45,6 +45,21 @@ func TestGeneratedBorrowedViews(t *testing.T) {
 	if string(view.Attachments[0].Name) != "a.txt" || string(view.Metadata[0].Key) != "k" {
 		t.Fatalf("unexpected nested generated views")
 	}
+	lazy, err := BorrowMessageLazy(wire)
+	if err != nil {
+		t.Fatalf("BorrowMessageLazy: %v", err)
+	}
+	if lazy.Attachments.Len() != 1 || lazy.Metadata.Len() != 1 {
+		t.Fatalf("unexpected lazy collection lengths")
+	}
+	lazyAttachment, ok := lazy.Attachments.At(0)
+	if !ok || string(lazyAttachment.Name) != "a.txt" {
+		t.Fatalf("unexpected lazy attachment: %#v, %v", lazyAttachment, ok)
+	}
+	lazyEntry, ok := lazy.Metadata.At(0)
+	if !ok || string(lazyEntry.Key) != "k" {
+		t.Fatalf("unexpected lazy metadata: %#v, %v", lazyEntry, ok)
+	}
 
 	textPos := bytes.Index(wire, []byte("hello"))
 	if textPos < 0 {

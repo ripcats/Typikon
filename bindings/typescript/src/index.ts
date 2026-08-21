@@ -4,6 +4,7 @@ export interface TypikonNative {
   encodeBinary(layer: number, typeName: string, input: Uint8Array): Uint8Array;
   decodeBinary(layer: number, typeName: string, input: Uint8Array): Uint8Array;
   validateBinary(layer: number, typeName: string, input: Uint8Array): void;
+  borrowBinary(layer: number, typeName: string, input: Uint8Array): Uint8Array;
 }
 
 export function loadNative(modulePath: string): TypikonNative {
@@ -24,5 +25,7 @@ export function createTypikon(native: TypikonNative) {
       native.decodeBinary(layer, typeName, input),
     validateBinary: (layer: number, typeName: string, input: Uint8Array) =>
       native.validateBinary(layer, typeName, input),
+    borrowBinary: (layer: number, typeName: string, input: Uint8Array) =>
+      native.borrowBinary(layer, typeName, input),
   };
 }

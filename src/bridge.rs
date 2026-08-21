@@ -228,6 +228,112 @@ fn generate_go_view_struct(item: &crate::Struct, schema: &Schema, output: &mut S
         }
     }
     output.push_str(&format!("return v,e}}\nfunc Borrow{name}(b []byte) ({name}View,error) {{ d:=wireDecoder{{b:b}}; v,e:=read{name}View(&d); if e==nil{{e=d.done()}}; return v,e }}\n\n"));
+    generate_go_lazy_view_struct(item, schema, output);
+}
+
+fn go_lazy_field_name(parent: &str, field: &str) -> String {
+    format!("{}{}LazyView", parent, pascal_case(field))
+}
+
+fn go_lazy_item_name(parent: &str, field: &str) -> String {
+    format!("read{}{}LazyItem", parent, pascal_case(field))
+}
+
+fn generate_go_lazy_view_struct(item: &crate::Struct, schema: &Schema, output: &mut String) {
+    let collections = item
+        .fields
+        .iter()
+        .filter(|field| {
+            matches!(field.ty, Type::Vec(_) | Type::Map(_, _)) && !is_bytes_type(&field.ty)
+        })
+        .collect::<Vec<_>>();
+    if collections.is_empty() {
+        return;
+    }
+    let name = &item.name;
+    for field in &collections {
+        let collection_name = go_lazy_field_name(name, &field.name);
+        let item_name = go_lazy_item_name(name, &field.name);
+        let (item_ty, decode_ty) = match &field.ty {
+            Type::Vec(ty) => (go_view_type(ty, schema), ty.as_ref().clone()),
+            Type::Map(key, value) => (
+                format!("{}{}Entry", name, pascal_case(&field.name)),
+                Type::Map(key.clone(), value.clone()),
+            ),
+            _ => unreachable!(),
+        };
+        if matches!(field.ty, Type::Map(_, _)) {
+            if let Type::Map(key, value) = &field.ty {
+                output.push_str(&format!(
+                    "type {} struct{{ Key {}; Value {} }}\n",
+                    item_ty,
+                    go_view_type(key, schema),
+                    go_view_type(value, schema)
+                ));
+            }
+        }
+        output.push_str(&format!("type {collection_name} struct{{ wire []byte; start,count int }}\nfunc (v {collection_name}) Len() int {{ return v.count }}\n"));
+        output.push_str(&format!(
+            "func {item_name}(d *wireDecoder) ({item_ty},error) {{ var v {item_ty}; var e error;"
+        ));
+        match decode_ty {
+            Type::Map(key, value) => {
+                go_decode_view_type(&key, &format!("v.Key"), schema, output);
+                go_decode_view_type(&value, &format!("v.Value"), schema, output);
+            }
+            ty => go_decode_view_type(&ty, "v", schema, output),
+        }
+        output.push_str("return v,e}\n");
+        output.push_str(&format!("func (v {collection_name}) At(i int) ({item_ty},bool) {{ var zero {item_ty}; if i<0||i>=v.count{{return zero,false}}; d:=wireDecoder{{b:v.wire,p:v.start}}; var value {item_ty}; var e error; for n:=0;n<=i;n++{{value,e={item_name}(&d);if e!=nil{{return zero,false}}}}; return value,true }}\n"));
+    }
+    output.push_str(&format!("type {name}LazyView struct{{"));
+    for field in &item.fields {
+        let ty = if collections
+            .iter()
+            .any(|candidate| candidate.name == field.name)
+        {
+            go_lazy_field_name(name, &field.name)
+        } else {
+            go_view_type(&field.ty, schema)
+        };
+        output.push_str(&format!(" {} {};", pascal_case(&field.name), ty));
+    }
+    output.push_str("}\n");
+    output.push_str(&format!("func read{name}LazyView(d *wireDecoder) ({name}LazyView,error){{var v {name}LazyView;if e:=cid(d,{name}CID);e!=nil{{return v,e}};var e error;"));
+    for field in &item.fields {
+        let lhs = format!("v.{}", pascal_case(&field.name));
+        let collection = collections
+            .iter()
+            .any(|candidate| candidate.name == field.name);
+        let decode = if collection {
+            let collection_name = go_lazy_field_name(name, &field.name);
+            let item_name = go_lazy_item_name(name, &field.name);
+            format!(
+                "{{var n uint64;n,e=d.varint();if e!=nil{{return v,e}};var c int;c,e=count(n);if e!=nil{{return v,e}};var start=d.p;for i:=0;i<c;i++{{_,e={item_name}(d);if e!=nil{{return v,e}}}};{lhs}={collection_name}{{wire:d.b,start:start,count:c}};}};"
+            )
+        } else {
+            String::new()
+        };
+        if let Some(guard) = &field.guard {
+            let (owner, bit) = guard.split_once('.').unwrap_or(("flags", guard));
+            output.push_str(&format!(
+                "if v.{}&(1<<{})!=0{{",
+                pascal_case(owner),
+                flag_value(item, bit)
+            ));
+            if collection {
+                output.push_str(&decode);
+            } else {
+                go_decode_view_type(&field.ty, &lhs, schema, output);
+            }
+            output.push_str("};");
+        } else if collection {
+            output.push_str(&decode);
+        } else {
+            go_decode_view_type(&field.ty, &lhs, schema, output);
+        }
+    }
+    output.push_str(&format!("return v,e}}\nfunc Borrow{name}Lazy(b []byte) ({name}LazyView,error){{d:=wireDecoder{{b:b}};v,e:=read{name}LazyView(&d);if e==nil{{e=d.done()}};return v,e}}\n\n"));
 }
 
 fn generate_go_view_enum(item: &crate::Enum, schema: &Schema, output: &mut String) {
@@ -517,6 +623,15 @@ fn go_decode_go_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut String, gu
 pub fn generate_typescript_binding(schema: &Schema) -> String {
     let mut output = String::from(
         "export interface TypikonNative { encodeBinary(layer: number, typeName: string, input: Uint8Array): Uint8Array; decodeBinary(layer: number, typeName: string, input: Uint8Array): Uint8Array; validateBinary(layer: number, typeName: string, input: Uint8Array): void; }\n\nclass WireEncoder { private b: number[] = []; raw(v: Uint8Array): void { for (const x of v) this.b.push(x); } u8(v: number): void { this.b.push(v & 255); } u16(v: number): void { this.u8(v); this.u8(v >>> 8); } u32(v: number): void { this.u8(v); this.u8(v >>> 8); this.u8(v >>> 16); this.u8(v >>> 24); } u64(v: number): void { let n = BigInt(v); for (let i = 0n; i < 8n; i++) { this.u8(Number(n & 255n)); n >>= 8n; } } i8(v: number): void { this.u8(v); } i16(v: number): void { this.u16(v); } i32(v: number): void { this.u32(v); } i64(v: number): void { this.u64(v); } f32(v: number): void { const x = new DataView(new ArrayBuffer(4)); x.setFloat32(0, v, true); this.u32(x.getUint32(0, true)); } f64(v: number): void { const x = new DataView(new ArrayBuffer(8)); x.setFloat64(0, v, true); this.u64(x.getBigUint64(0, true) as unknown as number); } bool(v: boolean): void { this.u8(v ? 1 : 0); } varint(v: number): void { let n = BigInt(v); while (n >= 128n) { this.u8(Number(n & 127n) | 128); n >>= 7n; } this.u8(Number(n)); } bytes(v: Uint8Array): void { this.varint(v.length); this.raw(v); } string(v: string): void { this.bytes(new TextEncoder().encode(v)); } finish(): Uint8Array { if (this.b.length > 4 * 1024 * 1024) throw new Error('packet exceeds limit'); return Uint8Array.from(this.b); } }\nclass WireDecoder { private p = 0; constructor(private readonly b: Uint8Array) {} take(n: number): Uint8Array { if (n < 0 || this.p > this.b.length - n) throw new Error('truncated wire'); const v = this.b.subarray(this.p, this.p + n); this.p += n; return v; } u8(): number { return this.take(1)[0]; } u16(): number { return this.u8() | (this.u8() << 8); } u32(): number { return (this.u8() | (this.u8() << 8) | (this.u8() << 16) | (this.u8() << 24)) >>> 0; } u64(): number { let n = 0n; for (let i = 0n; i < 8n; i++) n |= BigInt(this.u8()) << (8n * i); return Number(n); } i8(): number { return (this.u8() << 24) >> 24; } i16(): number { const n = this.u16(); return (n << 16) >> 16; } i32(): number { return this.u32() | 0; } i64(): number { return this.u64(); } f32(): number { const x = new DataView(this.take(4).slice().buffer); return x.getFloat32(0, true); } f64(): number { const x = new DataView(this.take(8).slice().buffer); return x.getFloat64(0, true); } bool(): boolean { return this.u8() !== 0; } varint(): number { let n = 0n; for (let i = 0n; i < 10n; i++) { const b = this.u8(); n |= BigInt(b & 127) << (7n * i); if (b < 128) return Number(n); } throw new Error('varint overflow'); } bytes(): Uint8Array { const n = this.varint(); return this.take(n); } string(): string { return new TextDecoder().decode(this.bytes()); } done(): void { if (this.p !== this.b.length) throw new Error('trailing bytes'); } }\nconst cid = (d: WireDecoder, want: Uint8Array): void => { const got = d.take(8); for (let i = 0; i < 8; i++) if (got[i] !== want[i]) throw new Error('invalid constructor ID'); };\nconst hex = (s: string): Uint8Array => Uint8Array.from(s.match(/.{2}/g)!.map(x => parseInt(x, 16)));\n\n",
+    );
+    output = output
+        .replace("class WireDecoder {", "export class WireDecoder {")
+        .replace("constructor(private readonly b: Uint8Array) {} take(n: number): Uint8Array", "constructor(private readonly b: Uint8Array, p = 0) { this.p = p; } position(): number { return this.p; } take(n: number): Uint8Array")
+        .replace("done(): void { if (this.p !== this.b.length)", "seek(position: number): void { if (position < 0 || position > this.b.length) throw new Error('invalid decoder position'); this.p = position; } done(): void { if (this.p !== this.b.length)");
+    output.push_str("export class LazyCollection<T> { constructor(private readonly wire: Uint8Array, private readonly start: number, readonly length: number, private readonly decode: (decoder: WireDecoder) => T) {} at(index: number): T { if (!Number.isInteger(index) || index < 0 || index >= this.length) throw new RangeError('collection index out of range'); const decoder = new WireDecoder(this.wire, this.start); let value!: T; for (let i = 0; i <= index; i++) value = this.decode(decoder); return value; } }\n\n");
+    output = output.replace(
+        "validateBinary(layer: number, typeName: string, input: Uint8Array): void;",
+        "validateBinary(layer: number, typeName: string, input: Uint8Array): void; borrowBinary(layer: number, typeName: string, input: Uint8Array): Uint8Array;",
     );
     for item in &schema.items {
         let name = item_name(item);
@@ -849,6 +964,112 @@ fn generate_typescript_view_struct(item: &crate::Struct, schema: &Schema, output
     }
     output.push_str(" return value; }\n");
     output.push_str(&format!("export function decode{name}View(wire: Uint8Array): {name}View {{ const d = new WireDecoder(wire); const value = read_{lower}_view(d); d.done(); return value; }}\n\n"));
+    generate_typescript_lazy_view_struct(item, schema, output);
+}
+
+fn typescript_lazy_item_type(ty: &Type, schema: &Schema) -> String {
+    match ty {
+        Type::Map(key, value) => format!(
+            "{{ key: {}; value: {} }}",
+            typescript_view_type(key, schema),
+            typescript_view_type(value, schema)
+        ),
+        Type::Vec(item) => typescript_view_type(item, schema),
+        _ => typescript_view_type(ty, schema),
+    }
+}
+
+fn generate_typescript_lazy_view_struct(
+    item: &crate::Struct,
+    schema: &Schema,
+    output: &mut String,
+) {
+    let collections = item
+        .fields
+        .iter()
+        .filter(|field| {
+            matches!(field.ty, Type::Vec(_) | Type::Map(_, _)) && !is_bytes_type(&field.ty)
+        })
+        .collect::<Vec<_>>();
+    if collections.is_empty() {
+        return;
+    }
+    let name = &item.name;
+    let lower = name.to_ascii_lowercase();
+    output.push_str(&format!("export interface {name}LazyView {{"));
+    for field in &item.fields {
+        let ty = if collections
+            .iter()
+            .any(|candidate| candidate.name == field.name)
+        {
+            format!(
+                "LazyCollection<{}>",
+                typescript_lazy_item_type(&field.ty, schema)
+            )
+        } else {
+            typescript_view_type(&field.ty, schema)
+        };
+        output.push_str(&format!(
+            " {}{}: {};",
+            field.name,
+            if field.guard.is_some() { "?" } else { "" },
+            ty
+        ));
+    }
+    output.push_str(" }\n");
+    output.push_str(&format!("function read_{lower}_lazy_view(d: WireDecoder, wire: Uint8Array): {name}LazyView {{ const value = {{}} as {name}LazyView; cid(d, {name}CID);"));
+    for field in &item.fields {
+        let lhs = format!("value.{}", field.name);
+        let is_collection = collections
+            .iter()
+            .any(|candidate| candidate.name == field.name);
+        let decode_collection = if is_collection {
+            let item_ty = match &field.ty {
+                Type::Vec(item) => item.as_ref(),
+                Type::Map(_, _) => &field.ty,
+                _ => unreachable!(),
+            };
+            let mut item_expression = String::new();
+            if let Type::Map(key, value) = &field.ty {
+                item_expression.push_str("({ key: ");
+                typescript_decode_view_expression(key, schema, &mut item_expression);
+                item_expression.push_str(", value: ");
+                typescript_decode_view_expression(value, schema, &mut item_expression);
+                item_expression.push_str(" })");
+            } else {
+                typescript_decode_view_expression(item_ty, schema, &mut item_expression);
+            }
+            let callback_expression = item_expression
+                .replace("d.", "itemDecoder.")
+                .replace("(d)", "(itemDecoder)");
+            let scan_expression = item_expression.replace("itemDecoder.", "d.");
+            let field_id = field.name.replace('_', "");
+            format!(
+                " const {field_id}Count = d.varint(); const {field_id}Start = d.position(); for (let i = 0; i < {field_id}Count; i++) {{ {scan_expression} }} {lhs} = new LazyCollection(wire, {field_id}Start, {field_id}Count, (itemDecoder: WireDecoder) => {callback_expression});"
+            )
+        } else {
+            String::new()
+        };
+        if let Some(guard) = &field.guard {
+            let (owner, bit) = guard.split_once('.').unwrap_or(("flags", guard));
+            output.push_str(&format!(
+                " if ((value.{} & (1 << {})) !== 0) {{",
+                owner,
+                ts_guard_bit(schema, owner, bit)
+            ));
+            if is_collection {
+                output.push_str(&decode_collection);
+            } else {
+                typescript_decode_view_type(&field.ty, &lhs, schema, output);
+            }
+            output.push_str(" }");
+        } else if is_collection {
+            output.push_str(&decode_collection);
+        } else {
+            typescript_decode_view_type(&field.ty, &lhs, schema, output);
+        }
+    }
+    output.push_str(&format!(" return value; }}\nexport function decode{name}LazyView(wire: Uint8Array): {name}LazyView {{ const d = new WireDecoder(wire); const value = read_{lower}_lazy_view(d, wire); d.done(); return value; }}\n\n"));
 }
 
 fn generate_typescript_view_enum(item: &crate::Enum, schema: &Schema, output: &mut String) {
@@ -985,11 +1206,12 @@ pub fn generate_python_binding(schema: &Schema) -> String {
             .collect::<Vec<_>>()
             .join(", "),
     );
-    output.push_str(&format!("\n\nLAYER = {}\n\n", schema.version));
+    output.push_str(&format!("\n\nLAYER = {}\n\nclass BorrowedPacket:\n    __slots__ = (\"_wire\", \"type_name\")\n\n    def __init__(self, wire: bytes, type_name: str) -> None:\n        self._wire = memoryview(wire)\n        self.type_name = type_name\n\n    @property\n    def wire(self) -> memoryview:\n        return self._wire\n\n", schema.version));
     for item in &schema.items {
+        let name = item_name(item);
         let function_name = snake_case(item_name(item));
         output.push_str(&format!(
-            "def encode_{function_name}(value: Any) -> bytes:\n    return _native_encode_{function_name}(value)\n\ndef decode_{function_name}(wire: bytes) -> Any:\n    return _native_decode_{function_name}(wire)\n\ndef validate_borrowed_{function_name}(wire: bytes) -> None:\n    _native_validate_borrowed_{function_name}(wire)\n\ndef borrowed_{function_name}(wire: bytes) -> memoryview:\n    \"\"\"Validate and retain the caller-owned packet without copying it.\"\"\"\n    validate_borrowed_{function_name}(wire)\n    return memoryview(wire)\n\n"
+            "def encode_{function_name}(value: Any) -> bytes:\n    return _native_encode_{function_name}(value)\n\ndef decode_{function_name}(wire: bytes) -> Any:\n    return _native_decode_{function_name}(wire)\n\ndef validate_borrowed_{function_name}(wire: bytes) -> None:\n    _native_validate_borrowed_{function_name}(wire)\n\ndef borrowed_{function_name}(wire: bytes) -> memoryview:\n    \"\"\"Validate and retain the caller-owned packet without copying it.\"\"\"\n    validate_borrowed_{function_name}(wire)\n    return memoryview(wire)\n\ndef borrowed_packet_{function_name}(wire: bytes) -> BorrowedPacket:\n    \"\"\"Return an owner object that keeps the packet backing storage alive.\"\"\"\n    validate_borrowed_{function_name}(wire)\n    return BorrowedPacket(wire, \"{name}\")\n\n"
         ));
     }
     output.push_str("__all__ = [\"LAYER\"");
@@ -997,7 +1219,7 @@ pub fn generate_python_binding(schema: &Schema) -> String {
         let name = item_name(item);
         let function_name = snake_case(name);
         output.push_str(&format!(
-            ", \"{name}\", \"encode_{function_name}\", \"decode_{function_name}\", \"validate_borrowed_{function_name}\", \"borrowed_{function_name}\""
+            ", \"{name}\", \"encode_{function_name}\", \"decode_{function_name}\", \"validate_borrowed_{function_name}\", \"borrowed_{function_name}\", \"borrowed_packet_{function_name}\""
         ));
     }
     output.push_str("]\n");
@@ -1265,6 +1487,16 @@ pub fn generate_bridge(schema: &Schema, native_file: &str, kind: BridgeKind) -> 
         }
         output
             .push_str("        _ => Err(napi::Error::from_reason(\"unknown schema type\")), } }\n");
+        output.push_str("\n#[napi]\npub fn borrow_binary(layer: u16, type_name: String, input: Buffer) -> napi::Result<Buffer> { check_layer(layer)?; match type_name.as_str() {\n");
+        for item in &schema.items {
+            let function_name = snake_case(item_name(item));
+            output.push_str(&format!(
+                "        \"{}\" => {{ validate_borrowed_{}(&input).map_err(|error| napi::Error::from_reason(format!(\"{{error:?}}\")))?; Ok(input) }},\n",
+                function_name, function_name
+            ));
+        }
+        output
+            .push_str("        _ => Err(napi::Error::from_reason(\"unknown schema type\")), } }\n");
     }
     output
 }
@@ -1360,10 +1592,14 @@ mod tests {
         assert!(go.contains("func BorrowAttachment"));
         assert!(go.contains("Name []byte"));
         assert!(go.contains("readUserView"));
+        assert!(go.contains("BorrowUserLazy"));
         let typescript = generate_typescript_binding(&schema);
         assert!(typescript.contains("export interface UserView"));
         assert!(typescript.contains("name: Uint8Array"));
         assert!(typescript.contains("decodeUserView"));
+        assert!(typescript.contains("decodeUserLazyView"));
+        assert!(typescript.contains("LazyCollection"));
+        assert!(typescript.contains("borrowBinary"));
         assert!(typescript.contains("export type EventView"));
     }
 
@@ -1414,6 +1650,7 @@ mod tests {
         assert!(source.contains("def encode_user"));
         assert!(source.contains("def decode_user"));
         assert!(source.contains("def borrowed_user"));
+        assert!(source.contains("def borrowed_packet_user"));
         assert!(source.contains("return memoryview(wire)"));
         assert!(source.contains("return _native_encode_user(value)"));
         assert!(source.contains("LAYER = 10"));

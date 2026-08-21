@@ -61,19 +61,13 @@ impl Encoder {
         Ok(self.bytes)
     }
     #[inline]
-    pub fn varint(&mut self, mut value: u64) -> Result<(), WireError> {
+    pub fn varint(&mut self, value: u64) -> Result<(), WireError> {
         if value < 0x80 {
             return self.push(value as u8);
         }
         let mut encoded = [0u8; MAX_VARINT_BYTES];
-        let mut len = 0;
-        while value >= 0x80 {
-            encoded[len] = (value as u8) | 0x80;
-            value >>= 7;
-            len += 1;
-        }
-        encoded[len] = value as u8;
-        self.extend(&encoded[..=len])
+        let len = encode_varint(value, &mut encoded);
+        self.extend(&encoded[..len])
     }
     #[inline]
     pub fn u8(&mut self, value: u8) -> Result<(), WireError> {
@@ -121,8 +115,15 @@ impl Encoder {
     #[inline]
     pub fn bytes(&mut self, value: &[u8]) -> Result<(), WireError> {
         let len = u64::try_from(value.len()).map_err(|_| WireError::IntegerOverflow)?;
-        self.varint(len)?;
-        self.extend(value)
+        let mut encoded_len = [0u8; MAX_VARINT_BYTES];
+        let prefix_len = encode_varint(len, &mut encoded_len);
+        let total = prefix_len
+            .checked_add(value.len())
+            .ok_or(WireError::IntegerOverflow)?;
+        self.ensure(total)?;
+        self.bytes.extend_from_slice(&encoded_len[..prefix_len]);
+        self.bytes.extend_from_slice(value);
+        Ok(())
     }
     pub fn value<T: WireCodec>(&mut self, value: &T) -> Result<(), WireError> {
         value.encode(self)
@@ -138,12 +139,29 @@ impl Encoder {
         Ok(())
     }
     fn extend(&mut self, bytes: &[u8]) -> Result<(), WireError> {
-        if self.bytes.len().saturating_add(bytes.len()) > self.max_size {
-            return Err(WireError::PacketTooLarge);
-        }
+        self.ensure(bytes.len())?;
         self.bytes.extend_from_slice(bytes);
         Ok(())
     }
+    fn ensure(&self, additional: usize) -> Result<(), WireError> {
+        match self.bytes.len().checked_add(additional) {
+            Some(end) if end <= self.max_size => Ok(()),
+            Some(_) => Err(WireError::PacketTooLarge),
+            None => Err(WireError::IntegerOverflow),
+        }
+    }
+}
+
+#[inline]
+fn encode_varint(mut value: u64, output: &mut [u8; MAX_VARINT_BYTES]) -> usize {
+    let mut len = 0;
+    while value >= 0x80 {
+        output[len] = (value as u8) | 0x80;
+        value >>= 7;
+        len += 1;
+    }
+    output[len] = value as u8;
+    len + 1
 }
 
 pub struct Decoder<'a> {
@@ -464,6 +482,11 @@ mod tests {
         assert_eq!(encoder.varint(128), Err(WireError::PacketTooLarge));
         encoder.u8(7).unwrap();
         assert_eq!(encoder.finish().unwrap(), [7]);
+
+        let mut encoder = Encoder::new(1);
+        assert_eq!(encoder.bytes(b"x"), Err(WireError::PacketTooLarge));
+        encoder.u8(9).unwrap();
+        assert_eq!(encoder.finish().unwrap(), [9]);
     }
 
     #[test]

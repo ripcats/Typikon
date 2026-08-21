@@ -24,6 +24,7 @@ All notable changes to Typikon since its initial public beta are documented here
 - Reproducible `cargo bench --bench wire` benchmark for message and 64 KiB payload paths.
 - Python, TypeScript, and Go golden wire round-trip checks.
 - Expanded malformed-input, collection preflight, canonical VarInt, borrowed-storage, and fuzz coverage.
+- Added runtime coverage for freshly generated Go borrowed views, including nested values, enum payloads, aliasing, and truncated wire.
 
 ### Changed
 

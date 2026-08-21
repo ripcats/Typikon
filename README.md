@@ -3,7 +3,7 @@
 ![Typikon Protocol](assets/cover.png)
 
 [![Версия](https://img.shields.io/badge/%D0%92%D0%B5%D1%80%D1%81%D0%B8%D1%8F-Beta-5865F2?style=for-the-badge&logo=github&logoColor=white)](#что-реально-проверено)
-[![Тесты](https://img.shields.io/badge/%D0%A2%D0%B5%D1%81%D1%82%D1%8B-40%20%D0%BF%D1%80%D0%BE%D0%B9%D0%B4%D0%B5%D0%BD%D0%BD%D1%8B%D1%85-3FB950?style=for-the-badge&logo=githubactions&logoColor=white)](#что-реально-проверено)
+[![Тесты](https://img.shields.io/badge/%D0%A2%D0%B5%D1%81%D1%82%D1%8B-60%20%D0%BF%D1%80%D0%BE%D0%B9%D0%B4%D0%B5%D0%BD%D0%BD%D1%8B%D1%85-3FB950?style=for-the-badge&logo=githubactions&logoColor=white)](#что-реально-проверено)
 [![English](https://img.shields.io/badge/English-2D333B?style=for-the-badge&logo=libretranslate&logoColor=white)](README.en.md)
 [![Evgeny Gerber](https://img.shields.io/badge/Evgeny%20Gerber-2AABEE?style=for-the-badge&logo=telegram&logoColor=white)](https://ripcats.t.me)
 
@@ -140,7 +140,7 @@ let text: &str = message.text;
 
 `&str` и `&[u8]` указывают прямо внутрь входного packet buffer, поэтому buffer обязан жить дольше view. Например, `MessageRef.sender` имеет тип `UserRef<'a>`, а `roles`, `attachments` и `metadata` представлены lazy borrowed views. Их итераторы декодируют элементы по мере чтения, без создания owned `Vec`/`BTreeMap`; объекты language bridge пока остаются owned values.
 
-Runtime API для этого публичный: `typikon::BorrowedWireCodec`, `typikon::decode_borrowed_value`, `typikon::BorrowedVec` и `typikon::BorrowedMap` экспортируются из crate root. Rust generated core может использовать их напрямую; Python, Go и TypeScript adapters пока возвращают owned language values, потому что их FFI lifetime/ownership contracts требуют отдельного безопасного view handle.
+Runtime API для этого публичный: `typikon::BorrowedWireCodec`, `typikon::decode_borrowed_value`, `typikon::BorrowedVec` и `typikon::BorrowedMap` экспортируются из crate root. Go получает `Borrow<Type>` с `[]byte`-срезами, TypeScript — `decode<Type>View` с `Uint8Array.subarray`; оба view сохраняют исходный packet buffer. Python предоставляет `borrowed_<type>` как валидируемый `memoryview`; typed `str` и контейнеры Python по-прежнему материализуются правилами самого Python.
 
 Для transport-level framing `Encoder` также предоставляет `write_vectored`: header, packet и trailer можно отправить через один vectored write без промежуточной конкатенации. API не привязан к TCP и подходит для TCP+TLS-адаптеров; QUIC, WebSocket и WebTransport могут использовать тот же готовый packet buffer и собственные message/frame boundaries.
 
@@ -266,7 +266,7 @@ messenger-10.ts              TypeScript facade
 - **Go** — schema-specific native Go wire codec; cgo остаётся для ABI и borrowed validation.
 - **TypeScript** — typed direct wire codec и Node-API native validation addon.
 
-Все адаптеры используют один wire contract. Go codec генерируется как прямой native Go encoder/decoder, TypeScript — как typed wire codec с native Node-API validation, Python — через прямую PyO3-конверсию.
+Все адаптеры используют один wire contract. Go codec генерируется как прямой native Go encoder/decoder с borrowed views, TypeScript — как typed wire codec с native Node-API validation и borrowed views, Python — через прямую PyO3-конверсию и packet-level `memoryview`.
 
 ## Layer и совместимость
 
@@ -288,7 +288,7 @@ Typikon — собственная schema-driven реализация бинар
 
 ## Что реально проверено
 
-Текущая Rust-проверка включает **52 теста: 49 unit и 3 integration**. Покрыты parser и semantic validation, code generation, воспроизводимость public schema, CLI, Layer negotiation, C-ID, round-trip primitive/collection wire-кодирования, лимиты, malformed/truncated input, duplicate Map keys, canonical VarInt, borrowed decode, lazy borrowed collections, vectored write и случайные parser/wire inputs.
+Текущая Rust-проверка включает **60 тестов: 57 unit и 3 integration**. Покрыты parser и semantic validation, code generation, воспроизводимость public schema, CLI, Layer negotiation, C-ID, round-trip primitive/collection wire-кодирования, лимиты, malformed/truncated input, duplicate Map keys, canonical VarInt, borrowed decode, lazy borrowed collections, Go/TypeScript view generation, vectored write и случайные parser/wire inputs.
 
 Воспроизводимые benchmarks запускаются командами `cargo bench --bench wire` и `cargo bench --bench compare`. Первый показывает внутренние пути Typikon, второй сравнивает с FlatBuffers baseline, тяжёлую collection-heavy схему и бинарные payload’ы размером 64 KiB и 1 MiB: размер wire, encode, owned decode, borrowed decode с полной итерацией и число аллокаций. Для FlatBuffers отдельно показываются verified и unchecked view paths: unchecked — только raw speed ceiling для уже проверенных packet’ов. Большие payload’ы прогоняются меньшим числом итераций. Результат зависит от CPU и профиля сборки и не считается сетевым benchmark.
 

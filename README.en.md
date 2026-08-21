@@ -3,7 +3,7 @@
 ![Typikon Protocol](assets/cover.png)
 
 [![Version](https://img.shields.io/badge/Version-Beta-5865F2?style=for-the-badge&logo=github&logoColor=white)](#what-is-actually-tested)
-[![Tests](https://img.shields.io/badge/Tests-40%20Passing-3FB950?style=for-the-badge&logo=githubactions&logoColor=white)](#what-is-actually-tested)
+[![Tests](https://img.shields.io/badge/Tests-60%20Passing-3FB950?style=for-the-badge&logo=githubactions&logoColor=white)](#what-is-actually-tested)
 [![Русский](https://img.shields.io/badge/%D0%A0%D1%83%D1%81%D1%81%D0%BA%D0%B8%D0%B9-2D333B?style=for-the-badge&logo=libretranslate&logoColor=white)](README.md)
 [![Evgeny Gerber](https://img.shields.io/badge/Evgeny%20Gerber-2AABEE?style=for-the-badge&logo=telegram&logoColor=white)](https://ripcats.t.me)
 
@@ -140,7 +140,7 @@ let text: &str = message.text;
 
 The resulting `&str` and `&[u8]` point directly into the input packet buffer, so the buffer must outlive the view. For example, `MessageRef.sender` has type `UserRef<'a>`, while `roles`, `attachments`, and `metadata` are lazy borrowed views. Their iterators decode elements on demand without creating an owned `Vec`/`BTreeMap`; language-bridge objects remain owned values for now.
 
-The runtime API is public: `typikon::BorrowedWireCodec`, `typikon::decode_borrowed_value`, `typikon::BorrowedVec`, and `typikon::BorrowedMap` are exported from the crate root. Generated Rust cores can use them directly; Python, Go, and TypeScript adapters still return owned language values because their FFI lifetime/ownership contracts need a separate safe view handle.
+The runtime API is public: `typikon::BorrowedWireCodec`, `typikon::decode_borrowed_value`, `typikon::BorrowedVec`, and `typikon::BorrowedMap` are exported from the crate root. Go exposes generated `Borrow<Type>` views with `[]byte` slices, while TypeScript exposes `decode<Type>View` with `Uint8Array.subarray`; both retain the original packet buffer. Python exposes `borrowed_<type>` as a validated `memoryview`; typed Python strings and containers are still materialized by Python itself.
 
 For transport-level framing, `Encoder` also provides `write_vectored`: a header, packet, and trailer can be sent with one vectored write without an intermediate concatenation. The API is transport-neutral and works for TCP+TLS adapters; QUIC, WebSocket, and WebTransport can use the same packet buffer with their own message/frame boundaries.
 
@@ -266,7 +266,7 @@ The generated Rust core is the only schema-specific implementation of binary enc
 - **Go** — cgo over the generated C ownership/error ABI.
 - **TypeScript** — a Node-API native addon with a typed facade.
 
-All adapters use the same Rust wire core. Go and TypeScript accept JSON only at the language/native boundary; the binary wire format does not change.
+All adapters use one wire contract. Go is generated as a direct native encoder/decoder with borrowed views, TypeScript as a typed wire codec with native Node-API validation and borrowed views, and Python through direct PyO3 conversion with a packet-level `memoryview`.
 
 ## Layers and compatibility
 
@@ -288,7 +288,7 @@ Transport and application logic intentionally remain a separate layer. Typikon f
 
 ## What is actually tested
 
-The current Rust suite contains **52 tests: 49 unit tests and 3 integration tests**. It covers parsing and semantic validation, code generation, reproducible public schemas, the CLI, Layer negotiation, C-IDs, primitive/collection wire round-trips, limits, malformed/truncated input, duplicate map keys, canonical VarInt, borrowed decoding, lazy borrowed collections, vectored writes, and randomized parser/wire inputs.
+The current Rust suite contains **60 tests: 57 unit tests and 3 integration tests**. It covers parsing and semantic validation, code generation, reproducible public schemas, the CLI, Layer negotiation, C-IDs, primitive/collection wire round-trips, limits, malformed/truncated input, duplicate map keys, canonical VarInt, borrowed decoding, lazy borrowed collections, Go/TypeScript view generation, vectored writes, and randomized parser/wire inputs.
 
 Reproducible benchmarks are available through `cargo bench --bench wire` and `cargo bench --bench compare`. The first measures Typikon internals; the second compares a baseline, a heavy collection-heavy shape, and 64 KiB/1 MiB binary payloads with FlatBuffers: wire size, encoding, owned decoding, borrowed decoding with full iteration, and allocation count. FlatBuffers view paths are reported separately as verified and unchecked; unchecked is only a raw speed ceiling for packets validated elsewhere. Large-payload cases use fewer iterations. Results depend on the CPU and build profile and are not a network benchmark.
 

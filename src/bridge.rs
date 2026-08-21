@@ -158,6 +158,153 @@ fn generate_go_item(item: &Item, schema: &Schema, output: &mut String) {
         Item::Enum(en) => generate_go_enum(en, schema, output),
     }
     output.push_str(&format!("func Encode{name}(v {name})([]byte,error){{e:=wireEncoder{{}};encode_{function_name}(&e,v);return e.finish()}}\nfunc Decode{name}(b []byte)({name},error){{d:=wireDecoder{{b:b}};v,e:=decode_{function_name}(&d);if e==nil{{e=d.done()}};return v,e}}\nfunc Validate{name}(b []byte)error{{if C.typikon_{}_{}_validate_borrowed(bridgePtr(b),C.size_t(len(b)))!=0{{return fmt.Errorf(\"invalid {} wire\")}};return nil}}\n\n", schema.version, function_name, name));
+    generate_go_view_item(item, schema, output);
+}
+
+fn go_view_type(ty: &Type, schema: &Schema) -> String {
+    match ty {
+        Type::Primitive(name) if name == "String" => "[]byte".into(),
+        Type::Vec(_) if is_bytes_type(ty) => "[]byte".into(),
+        Type::Primitive(name) if schema.items.iter().any(|i| item_name(i) == name) => {
+            if go_named_view(name, schema) {
+                format!("{}View", name)
+            } else {
+                go_type(ty, schema)
+            }
+        }
+        Type::Vec(item) => format!("[]{}", go_view_type(item, schema)),
+        Type::Map(key, value) => format!(
+            "[]struct {{ Key {}; Value {} }}",
+            go_view_type(key, schema),
+            go_view_type(value, schema)
+        ),
+        Type::Primitive(_) => go_type(ty, schema),
+    }
+}
+
+fn go_named_view(name: &str, schema: &Schema) -> bool {
+    match schema.items.iter().find(|i| item_name(i) == name) {
+        Some(Item::Struct(_)) => true,
+        Some(Item::Enum(en)) => !en.variants.iter().all(|v| v.fields.is_empty()),
+        _ => false,
+    }
+}
+
+fn generate_go_view_item(item: &Item, schema: &Schema, output: &mut String) {
+    match item {
+        Item::Struct(st) => generate_go_view_struct(st, schema, output),
+        Item::Enum(en) if !en.variants.iter().all(|v| v.fields.is_empty()) => {
+            generate_go_view_enum(en, schema, output)
+        }
+        _ => {}
+    }
+}
+
+fn generate_go_view_struct(item: &crate::Struct, schema: &Schema, output: &mut String) {
+    let name = &item.name;
+    output.push_str(&format!("type {name}View struct {{"));
+    for field in &item.fields {
+        output.push_str(&format!(
+            " {} {};",
+            pascal_case(&field.name),
+            go_view_type(&field.ty, schema)
+        ));
+    }
+    output.push_str("}\n");
+    output.push_str(&format!("func read{}View(d *wireDecoder) ({name}View,error) {{ var v {name}View; if e:=cid(d,{name}CID);e!=nil{{return v,e}}; var e error;", name));
+    for field in &item.fields {
+        let lhs = format!("v.{}", pascal_case(&field.name));
+        if let Some(guard) = &field.guard {
+            let (owner, bit) = guard.split_once('.').unwrap_or(("flags", guard));
+            output.push_str(&format!(
+                "if v.{}&(1<<{})!=0{{",
+                pascal_case(owner),
+                flag_value(item, bit)
+            ));
+            go_decode_view_type(&field.ty, &lhs, schema, output);
+            output.push_str("};");
+        } else {
+            go_decode_view_type(&field.ty, &lhs, schema, output);
+        }
+    }
+    output.push_str(&format!("return v,e}}\nfunc Borrow{name}(b []byte) ({name}View,error) {{ d:=wireDecoder{{b:b}}; v,e:=read{name}View(&d); if e==nil{{e=d.done()}}; return v,e }}\n\n"));
+}
+
+fn generate_go_view_enum(item: &crate::Enum, schema: &Schema, output: &mut String) {
+    let name = &item.name;
+    output.push_str(&format!("type {name}View interface{{is{name}View()}}\n"));
+    for variant in &item.variants {
+        let vn = format!("{}{}View", name, variant.name);
+        output.push_str(&format!("type {vn} struct{{"));
+        for field in &variant.fields {
+            output.push_str(&format!(
+                " {} {};",
+                pascal_case(&field.name),
+                go_view_type(&field.ty, schema)
+            ));
+        }
+        output.push_str(&format!("}}\nfunc ({vn})is{name}View(){{}}\n"));
+    }
+    output.push_str(&format!("func read{name}View(d *wireDecoder) ({name}View,error) {{ c,e:=d.take(8);if e!=nil{{return nil,e}};switch string(c){{"));
+    for variant in &item.variants {
+        let vn = format!("{}{}View", name, variant.name);
+        let cid = variant
+            .cid
+            .clone()
+            .unwrap_or_else(|| variant_cid(item, variant));
+        output.push_str(&format!(
+            "case string([]byte{{{}}}): var v {vn};",
+            cid_bytes(&cid)
+        ));
+        for field in &variant.fields {
+            go_decode_view_type(
+                &field.ty,
+                &format!("v.{}", pascal_case(&field.name)),
+                schema,
+                output,
+            );
+        }
+        output.push_str("return v,e;");
+    }
+    output.push_str("default:return nil,fmt.Errorf(\"unknown constructor\")}}\n");
+    output.push_str(&format!("func Borrow{name}(b []byte) ({name}View,error) {{ d:=wireDecoder{{b:b}}; v,e:=read{name}View(&d);if e==nil{{e=d.done()}};return v,e }}\n\n"));
+}
+
+fn go_decode_view_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut String) {
+    if is_bytes_type(ty) || matches!(ty, Type::Primitive(name) if name == "String") {
+        out.push_str(&format!("{lhs},e=d.bytes();if e!=nil{{return v,e}};"));
+        return;
+    }
+    match ty {
+        Type::Primitive(name) if schema.items.iter().any(|i| item_name(i) == name) => {
+            if go_named_view(name, schema) {
+                out.push_str(&format!(
+                    "{lhs},e=read{}View(d);if e!=nil{{return v,e}};",
+                    name
+                ));
+            } else {
+                out.push_str(&format!(
+                    "{lhs},e=decode_{}(d);if e!=nil{{return v,e}};",
+                    snake_case(name)
+                ));
+            }
+        }
+        Type::Primitive(name) => out.push_str(&format!(
+            "{lhs},e=d.{}();if e!=nil{{return v,e}};",
+            go_wire_method(name)
+        )),
+        Type::Vec(item) => {
+            out.push_str(&format!("{{var n uint64;n,e=d.varint();if e!=nil{{return v,e}};var c int;c,e=count(n);if e!=nil{{return v,e}};{lhs}=make({},c);for i:=range {lhs}{{", go_view_type(ty, schema)));
+            go_decode_view_type(item, &format!("{lhs}[i]"), schema, out);
+            out.push_str("}};");
+        }
+        Type::Map(key, value) => {
+            out.push_str(&format!("{{var n uint64;n,e=d.varint();if e!=nil{{return v,e}};var c int;c,e=count(n);if e!=nil{{return v,e}};{lhs}=make({},c);for i:=range {lhs}{{", go_view_type(ty, schema)));
+            go_decode_view_type(key, &format!("{lhs}[i].Key"), schema, out);
+            go_decode_view_type(value, &format!("{lhs}[i].Value"), schema, out);
+            out.push_str("}};");
+        }
+    }
 }
 
 fn generate_go_struct(item: &crate::Struct, schema: &Schema, output: &mut String) {
@@ -307,6 +454,10 @@ fn go_wire_method(name: &str) -> &str {
     }
 }
 fn go_encode_go_type(ty: &Type, expr: &str, schema: &Schema, out: &mut String) {
+    if is_bytes_type(ty) {
+        out.push_str(&format!("e.bytes({expr});"));
+        return;
+    }
     match ty {
         Type::Primitive(n) => {
             if schema.items.iter().any(|i| item_name(i) == n) {
@@ -332,6 +483,10 @@ fn go_encode_go_type(ty: &Type, expr: &str, schema: &Schema, out: &mut String) {
 }
 fn go_decode_go_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut String, guarded: bool) {
     let _ = guarded;
+    if is_bytes_type(ty) {
+        out.push_str(&format!("{lhs},e=d.bytes();if e!=nil{{return v,e}};"));
+        return;
+    }
     match ty {
         Type::Primitive(n) => {
             if schema.items.iter().any(|i| item_name(i) == n) {
@@ -428,6 +583,7 @@ fn generate_typescript_typed_item(item: &Item, schema: &Schema, output: &mut Str
             }
             output.push_str(" return value; }\n");
             output.push_str(&format!("export function encode{name}(value: {name}): Uint8Array {{ const e = new WireEncoder(); write_{fn_name}(e, value); return e.finish(); }}\nexport function decode{name}(wire: Uint8Array): {name} {{ const d = new WireDecoder(wire); const value = read_{fn_name}(d); d.done(); return value; }}\n\n"));
+            generate_typescript_view_struct(st, schema, output);
         }
         Item::Flags(flags) => {
             let name = &flags.name;
@@ -512,6 +668,7 @@ fn generate_typescript_typed_item(item: &Item, schema: &Schema, output: &mut Str
             }
             output.push_str(" throw new Error('unknown constructor'); }\n");
             output.push_str(&format!("export function encode{name}(value: {name}): Uint8Array {{ const e = new WireEncoder(); write_{lower}(e, value); return e.finish(); }}\nexport function decode{name}(wire: Uint8Array): {name} {{ const d = new WireDecoder(wire); const value = read_{lower}(d); d.done(); return value; }}\n\n"));
+            generate_typescript_view_enum(en, schema, output);
         }
     }
 }
@@ -556,6 +713,10 @@ fn ts_guard_bit(schema: &Schema, owner: &str, bit: &str) -> u64 {
         })
 }
 fn typescript_encode_type(ty: &Type, expr: &str, schema: &Schema, out: &mut String) {
+    if is_bytes_type(ty) {
+        out.push_str(&format!(" e.bytes({});", expr));
+        return;
+    }
     match ty {
         Type::Primitive(n) => {
             if schema.items.iter().any(|i| item_name(i) == n) {
@@ -580,6 +741,10 @@ fn typescript_encode_type(ty: &Type, expr: &str, schema: &Schema, out: &mut Stri
     }
 }
 fn typescript_decode_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut String) {
+    if is_bytes_type(ty) {
+        out.push_str(&format!(" {} = d.bytes();", lhs));
+        return;
+    }
     match ty {
         Type::Primitive(n) => {
             if schema.items.iter().any(|i| item_name(i) == n) {
@@ -607,6 +772,10 @@ fn typescript_decode_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut Strin
     }
 }
 fn typescript_decode_expression(ty: &Type, schema: &Schema, out: &mut String) {
+    if is_bytes_type(ty) {
+        out.push_str("d.bytes()");
+        return;
+    }
     match ty {
         Type::Primitive(n) => {
             if schema.items.iter().any(|i| item_name(i) == n) {
@@ -625,6 +794,175 @@ fn typescript_decode_expression(ty: &Type, schema: &Schema, out: &mut String) {
             typescript_decode_expression(value, schema, out);
             out.push_str("]; }))");
         }
+    }
+}
+
+fn typescript_view_type(ty: &Type, schema: &Schema) -> String {
+    match ty {
+        Type::Primitive(name) if name == "String" => "Uint8Array".into(),
+        Type::Primitive(name) if schema.items.iter().any(|i| item_name(i) == name) => {
+            if typescript_named_view(name, schema) {
+                format!("{}View", name)
+            } else {
+                name.clone()
+            }
+        }
+        Type::Vec(_) if is_bytes_type(ty) => "Uint8Array".into(),
+        Type::Vec(item) => format!("Array<{}>", typescript_view_type(item, schema)),
+        Type::Map(key, value) => format!(
+            "Array<{{ key: {}; value: {} }}>",
+            typescript_view_type(key, schema),
+            typescript_view_type(value, schema)
+        ),
+        Type::Primitive(name) => typescript_type(&Type::Primitive(name.clone()), schema),
+    }
+}
+
+fn generate_typescript_view_struct(item: &crate::Struct, schema: &Schema, output: &mut String) {
+    let name = &item.name;
+    let lower = name.to_ascii_lowercase();
+    output.push_str(&format!("export interface {name}View {{"));
+    for field in &item.fields {
+        output.push_str(&format!(
+            " {}{}: {};",
+            field.name,
+            if field.guard.is_some() { "?" } else { "" },
+            typescript_view_type(&field.ty, schema)
+        ));
+    }
+    output.push_str(" }\n");
+    output.push_str(&format!("function read_{lower}_view(d: WireDecoder): {name}View {{ cid(d, {name}CID); const value = {{}} as {name}View;"));
+    for field in &item.fields {
+        let lhs = format!("value.{}", field.name);
+        if let Some(guard) = &field.guard {
+            let (owner, bit) = guard.split_once('.').unwrap_or(("flags", guard));
+            output.push_str(&format!(
+                " if ((value.{} & (1 << {})) !== 0) {{",
+                owner,
+                ts_guard_bit(schema, owner, bit)
+            ));
+            typescript_decode_view_type(&field.ty, &lhs, schema, output);
+            output.push_str(" }");
+        } else {
+            typescript_decode_view_type(&field.ty, &lhs, schema, output);
+        }
+    }
+    output.push_str(" return value; }\n");
+    output.push_str(&format!("export function decode{name}View(wire: Uint8Array): {name}View {{ const d = new WireDecoder(wire); const value = read_{lower}_view(d); d.done(); return value; }}\n\n"));
+}
+
+fn generate_typescript_view_enum(item: &crate::Enum, schema: &Schema, output: &mut String) {
+    let name = &item.name;
+    let lower = name.to_ascii_lowercase();
+    let variants = item
+        .variants
+        .iter()
+        .map(|v| {
+            let fields = v
+                .fields
+                .iter()
+                .map(|f| format!("{}: {}", f.name, typescript_view_type(&f.ty, schema)))
+                .collect::<Vec<_>>()
+                .join("; ");
+            format!("{{ {}: {{ {} }} }}", v.name, fields)
+        })
+        .collect::<Vec<_>>()
+        .join(" | ");
+    output.push_str(&format!("export type {name}View = {variants};\nfunction read_{lower}_view(d: WireDecoder): {name}View {{ const c = d.take(8);"));
+    for variant in &item.variants {
+        let cid = variant
+            .cid
+            .clone()
+            .unwrap_or_else(|| variant_cid(item, variant));
+        output.push_str(&format!(
+            " if (c.every((x, i) => x === hex(\"{}\")[i])) return {{ {}: {{",
+            cid, variant.name
+        ));
+        for field in &variant.fields {
+            output.push_str(&format!(" {}: ", field.name));
+            typescript_decode_view_expression(&field.ty, schema, output);
+            output.push(',');
+        }
+        output.push_str(" } };");
+    }
+    output.push_str(" throw new Error('unknown constructor'); }\n");
+    output.push_str(&format!("export function decode{name}View(wire: Uint8Array): {name}View {{ const d = new WireDecoder(wire); const value = read_{lower}_view(d); d.done(); return value; }}\n\n"));
+}
+
+fn typescript_decode_view_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut String) {
+    if is_bytes_type(ty) || matches!(ty, Type::Primitive(name) if name == "String") {
+        out.push_str(&format!(" {} = d.bytes();", lhs));
+        return;
+    }
+    match ty {
+        Type::Primitive(name) if schema.items.iter().any(|i| item_name(i) == name) => {
+            let is_view = typescript_named_view(name, schema);
+            out.push_str(&format!(
+                " {} = read_{}{}(d);",
+                lhs,
+                name.to_ascii_lowercase(),
+                if is_view { "_view" } else { "" }
+            ));
+        }
+        Type::Primitive(name) => {
+            out.push_str(&format!(" {} = d.{}();", lhs, typescript_wire_method(name)))
+        }
+        Type::Vec(item) => {
+            out.push_str(&format!(
+                " {} = Array.from({{ length: d.varint() }}, () => ",
+                lhs
+            ));
+            typescript_decode_view_expression(item, schema, out);
+            out.push_str(");");
+        }
+        Type::Map(key, value) => {
+            out.push_str(&format!(
+                " {} = Array.from({{ length: d.varint() }}, () => ({{ key: ",
+                lhs
+            ));
+            typescript_decode_view_expression(key, schema, out);
+            out.push_str(", value: ");
+            typescript_decode_view_expression(value, schema, out);
+            out.push_str(" }));");
+        }
+    }
+}
+
+fn typescript_decode_view_expression(ty: &Type, schema: &Schema, out: &mut String) {
+    if is_bytes_type(ty) || matches!(ty, Type::Primitive(name) if name == "String") {
+        out.push_str("d.bytes()");
+        return;
+    }
+    match ty {
+        Type::Primitive(name) if schema.items.iter().any(|i| item_name(i) == name) => {
+            let is_view = typescript_named_view(name, schema);
+            out.push_str(&format!(
+                "read_{}{}(d)",
+                name.to_ascii_lowercase(),
+                if is_view { "_view" } else { "" }
+            ));
+        }
+        Type::Primitive(name) => out.push_str(&format!("d.{}()", typescript_wire_method(name))),
+        Type::Vec(item) => {
+            out.push_str("Array.from({ length: d.varint() }, () => ");
+            typescript_decode_view_expression(item, schema, out);
+            out.push(')');
+        }
+        Type::Map(key, value) => {
+            out.push_str("Array.from({ length: d.varint() }, () => ({ key: ");
+            typescript_decode_view_expression(key, schema, out);
+            out.push_str(", value: ");
+            typescript_decode_view_expression(value, schema, out);
+            out.push_str(" }))");
+        }
+    }
+}
+
+fn typescript_named_view(name: &str, schema: &Schema) -> bool {
+    match schema.items.iter().find(|i| item_name(i) == name) {
+        Some(Item::Struct(_)) => true,
+        Some(Item::Enum(en)) => !en.variants.iter().all(|v| v.fields.is_empty()),
+        _ => false,
     }
 }
 
@@ -651,7 +989,7 @@ pub fn generate_python_binding(schema: &Schema) -> String {
     for item in &schema.items {
         let function_name = snake_case(item_name(item));
         output.push_str(&format!(
-            "def encode_{function_name}(value: Any) -> bytes:\n    return _native_encode_{function_name}(value)\n\ndef decode_{function_name}(wire: bytes) -> Any:\n    return _native_decode_{function_name}(wire)\n\ndef validate_borrowed_{function_name}(wire: bytes) -> None:\n    _native_validate_borrowed_{function_name}(wire)\n\n"
+            "def encode_{function_name}(value: Any) -> bytes:\n    return _native_encode_{function_name}(value)\n\ndef decode_{function_name}(wire: bytes) -> Any:\n    return _native_decode_{function_name}(wire)\n\ndef validate_borrowed_{function_name}(wire: bytes) -> None:\n    _native_validate_borrowed_{function_name}(wire)\n\ndef borrowed_{function_name}(wire: bytes) -> memoryview:\n    \"\"\"Validate and retain the caller-owned packet without copying it.\"\"\"\n    validate_borrowed_{function_name}(wire)\n    return memoryview(wire)\n\n"
         ));
     }
     output.push_str("__all__ = [\"LAYER\"");
@@ -659,7 +997,7 @@ pub fn generate_python_binding(schema: &Schema) -> String {
         let name = item_name(item);
         let function_name = snake_case(name);
         output.push_str(&format!(
-            ", \"{name}\", \"encode_{function_name}\", \"decode_{function_name}\", \"validate_borrowed_{function_name}\""
+            ", \"{name}\", \"encode_{function_name}\", \"decode_{function_name}\", \"validate_borrowed_{function_name}\", \"borrowed_{function_name}\""
         ));
     }
     output.push_str("]\n");
@@ -751,6 +1089,9 @@ fn pascal_case(name: &str) -> String {
 }
 
 fn go_type(ty: &Type, schema: &Schema) -> String {
+    if is_bytes_type(ty) {
+        return "[]byte".into();
+    }
     match ty {
         Type::Primitive(name) => match name.as_str() {
             "String" => "string".into(),
@@ -776,6 +1117,9 @@ fn go_type(ty: &Type, schema: &Schema) -> String {
 }
 
 fn typescript_type(ty: &Type, schema: &Schema) -> String {
+    if is_bytes_type(ty) {
+        return "Uint8Array".into();
+    }
     match ty {
         Type::Primitive(name) => match name.as_str() {
             "String" => "string".into(),
@@ -788,6 +1132,10 @@ fn typescript_type(ty: &Type, schema: &Schema) -> String {
         Type::Vec(item) => format!("Array<{}>", typescript_type(item, schema)),
         Type::Map(_, value) => format!("Record<string, {}>", typescript_type(value, schema)),
     }
+}
+
+fn is_bytes_type(ty: &Type) -> bool {
+    matches!(ty, Type::Vec(item) if matches!(item.as_ref(), Type::Primitive(name) if name == "u8"))
 }
 
 pub fn generate_bridge(schema: &Schema, native_file: &str, kind: BridgeKind) -> String {
@@ -1001,6 +1349,24 @@ mod tests {
     }
 
     #[test]
+    fn generated_go_and_typescript_views_cover_borrowable_fields() {
+        let schema = parse_schema(
+            "#[version(10)] struct User { id: u64, name: String, tags: Vec<String>, } enum Event { Created { user: User }, }",
+        )
+        .unwrap();
+        let go = generate_go_binding(&schema, "chat-10.h");
+        assert!(go.contains("type UserView struct"));
+        assert!(go.contains("func BorrowUser"));
+        assert!(go.contains("Name []byte"));
+        assert!(go.contains("readUserView"));
+        let typescript = generate_typescript_binding(&schema);
+        assert!(typescript.contains("export interface UserView"));
+        assert!(typescript.contains("name: Uint8Array"));
+        assert!(typescript.contains("decodeUserView"));
+        assert!(typescript.contains("export type EventView"));
+    }
+
+    #[test]
     fn generated_bridges_expose_owned_error_and_data_buffers() {
         let schema = parse_schema("#[version(10)] struct Message { id: u64, }").unwrap();
         let source = generate_bridge(&schema, "chat-10.rs", BridgeKind::Go);
@@ -1046,6 +1412,8 @@ mod tests {
         assert!(source.contains("from typikon_python import encode_user as _native_encode_user"));
         assert!(source.contains("def encode_user"));
         assert!(source.contains("def decode_user"));
+        assert!(source.contains("def borrowed_user"));
+        assert!(source.contains("return memoryview(wire)"));
         assert!(source.contains("return _native_encode_user(value)"));
         assert!(source.contains("LAYER = 10"));
     }

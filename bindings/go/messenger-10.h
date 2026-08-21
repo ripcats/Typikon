@@ -7,23 +7,11 @@ typedef struct { int32_t status; uint8_t *data_ptr; size_t data_len; size_t data
 
 void typikon_free_bytes(uint8_t *ptr, size_t len, size_t capacity);
 
-TypikonBridgeResult typikon_10_user_flags_encode_json(const uint8_t *input, size_t len);
-TypikonBridgeResult typikon_10_user_flags_decode_json(const uint8_t *input, size_t len);
 int32_t typikon_10_user_flags_validate_borrowed(const uint8_t *input, size_t len);
-TypikonBridgeResult typikon_10_presence_encode_json(const uint8_t *input, size_t len);
-TypikonBridgeResult typikon_10_presence_decode_json(const uint8_t *input, size_t len);
 int32_t typikon_10_presence_validate_borrowed(const uint8_t *input, size_t len);
-TypikonBridgeResult typikon_10_user_encode_json(const uint8_t *input, size_t len);
-TypikonBridgeResult typikon_10_user_decode_json(const uint8_t *input, size_t len);
 int32_t typikon_10_user_validate_borrowed(const uint8_t *input, size_t len);
-TypikonBridgeResult typikon_10_attachment_encode_json(const uint8_t *input, size_t len);
-TypikonBridgeResult typikon_10_attachment_decode_json(const uint8_t *input, size_t len);
 int32_t typikon_10_attachment_validate_borrowed(const uint8_t *input, size_t len);
-TypikonBridgeResult typikon_10_message_encode_json(const uint8_t *input, size_t len);
-TypikonBridgeResult typikon_10_message_decode_json(const uint8_t *input, size_t len);
 int32_t typikon_10_message_validate_borrowed(const uint8_t *input, size_t len);
-TypikonBridgeResult typikon_10_update_encode_json(const uint8_t *input, size_t len);
-TypikonBridgeResult typikon_10_update_decode_json(const uint8_t *input, size_t len);
 int32_t typikon_10_update_validate_borrowed(const uint8_t *input, size_t len);
 
 #endif

@@ -317,7 +317,6 @@ dependencies = [
  "napi",
  "napi-derive",
  "serde",
- "serde_json",
  "typikon",
 ]
 

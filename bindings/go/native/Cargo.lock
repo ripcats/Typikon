@@ -168,7 +168,6 @@ name = "typikon-go-native"
 version = "0.2.0"
 dependencies = [
  "serde",
- "serde_json",
  "typikon",
 ]
 

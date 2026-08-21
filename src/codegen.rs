@@ -403,7 +403,7 @@ fn generate_unit_enum(item: &Enum, output: &mut String) {
             variant.name
         ));
     }
-    output.push_str("        _ => Err(typikon::WireError::InvalidEnum),\n    } }\n    fn encoded_len(&self) -> usize { 8 }\n}\n");
+    output.push_str("        _ => Err(typikon::WireError::InvalidEnum),\n    } }\n    fn encoded_len(&self) -> usize { 8 }\n    const FIXED_ENCODED_LEN: Option<usize> = Some(8);\n}\n");
 }
 
 fn generate_flags(item: &Flags, output: &mut String) {
@@ -425,7 +425,14 @@ fn generate_flags(item: &Flags, output: &mut String) {
         item.underlying
     ));
     output.push_str("}\n");
-    output.push_str(&format!("impl typikon::WireCodec for {} {{ fn encode(&self, encoder: &mut typikon::Encoder) -> Result<(), typikon::WireError> {{ self.0.encode(encoder) }} fn decode(decoder: &mut typikon::Decoder<'_>) -> Result<Self, typikon::WireError> {{ Ok(Self(typikon::WireCodec::decode(decoder)?)) }} fn encoded_len(&self) -> usize {{ typikon::WireCodec::encoded_len(&self.0) }} }}\n", item.name));
+    let fixed_size = match item.underlying.as_str() {
+        "u8" => 1,
+        "u16" => 2,
+        "u32" => 4,
+        "u64" => 8,
+        _ => unreachable!("validated flags underlying type"),
+    };
+    output.push_str(&format!("impl typikon::WireCodec for {} {{ const FIXED_ENCODED_LEN: Option<usize> = Some({fixed_size}); fn encode(&self, encoder: &mut typikon::Encoder) -> Result<(), typikon::WireError> {{ self.0.encode(encoder) }} fn decode(decoder: &mut typikon::Decoder<'_>) -> Result<Self, typikon::WireError> {{ Ok(Self(typikon::WireCodec::decode(decoder)?)) }} fn encoded_len(&self) -> usize {{ {fixed_size} }} }}\n", item.name));
 }
 
 fn rust_field_type(field: &Field) -> String {

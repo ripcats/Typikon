@@ -24,6 +24,8 @@ pub struct Encoder {
 }
 
 pub trait WireCodec: Sized {
+    const FIXED_ENCODED_LEN: Option<usize> = None;
+
     fn encode(&self, encoder: &mut Encoder) -> Result<(), WireError>;
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self, WireError>;
     fn encoded_len(&self) -> usize {
@@ -331,6 +333,8 @@ impl<'a> Decoder<'a> {
 macro_rules! primitive_codec {
     ($type:ty, $encode:ident, $decode:ident, $size:expr) => {
         impl WireCodec for $type {
+            const FIXED_ENCODED_LEN: Option<usize> = Some($size);
+
             fn encode(&self, encoder: &mut Encoder) -> Result<(), WireError> {
                 encoder.$encode(*self)
             }
@@ -390,10 +394,13 @@ impl<T: WireCodec> WireCodec for Vec<T> {
         Ok(result)
     }
     fn encoded_len(&self) -> usize {
-        self.iter()
-            .fold(varint_len(self.len() as u64), |size, item| {
-                size.saturating_add(item.encoded_len())
-            })
+        let prefix = varint_len(self.len() as u64);
+        match T::FIXED_ENCODED_LEN {
+            Some(item_size) => prefix.saturating_add(self.len().saturating_mul(item_size)),
+            None => self
+                .iter()
+                .fold(prefix, |size, item| size.saturating_add(item.encoded_len())),
+        }
     }
 }
 
@@ -422,11 +429,17 @@ impl<K: WireCodec + Ord, V: WireCodec> WireCodec for BTreeMap<K, V> {
         Ok(result)
     }
     fn encoded_len(&self) -> usize {
-        self.iter()
-            .fold(varint_len(self.len() as u64), |size, (key, value)| {
+        let prefix = varint_len(self.len() as u64);
+        match (K::FIXED_ENCODED_LEN, V::FIXED_ENCODED_LEN) {
+            (Some(key_size), Some(value_size)) => prefix.saturating_add(
+                self.len()
+                    .saturating_mul(key_size.saturating_add(value_size)),
+            ),
+            _ => self.iter().fold(prefix, |size, (key, value)| {
                 size.saturating_add(key.encoded_len())
                     .saturating_add(value.encoded_len())
-            })
+            }),
+        }
     }
 }
 
@@ -610,6 +623,16 @@ mod tests {
             value.2
         );
         assert!(decoder.is_finished());
+    }
+
+    #[test]
+    fn fixed_width_collection_lengths_are_constant_time_metadata() {
+        let values = vec![1u64, 2, 3, 4];
+        assert_eq!(u64::FIXED_ENCODED_LEN, Some(8));
+        assert_eq!(values.encoded_len(), 1 + 4 * 8);
+
+        let map = BTreeMap::from([(1u16, 10u32), (2u16, 20u32)]);
+        assert_eq!(map.encoded_len(), 1 + 2 * (2 + 4));
     }
 
     #[test]

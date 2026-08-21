@@ -1,0 +1,10 @@
+{
+  "name": "@typikon/protocol",
+  "version": "0.2.0",
+  "private": true,
+  "description": "TypeScript bridge for the Typikon Rust core",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": { "build": "tsc" },
+  "devDependencies": { "@types/node": "^22.0.0", "typescript": "^5.0.0" }
+}

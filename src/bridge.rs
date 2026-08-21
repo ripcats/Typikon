@@ -377,7 +377,7 @@ fn generate_go_lazy_view_struct(item: &crate::Struct, schema: &Schema, output: &
         }
         output.push_str("return v,e}\n");
         output.push_str(&format!("func (v {collection_name}) At(i int) ({item_ty},bool) {{ var zero {item_ty}; if i<0||i>=v.count{{return zero,false}}; d:=wireDecoder{{b:v.wire,p:v.start}}; var value {item_ty}; var e error; for n:=0;n<=i;n++{{value,e={item_name}(&d);if e!=nil{{return zero,false}}}}; return value,true }}\n"));
-        output.push_str(&format!("type {collection_name}Iter struct{{ view {collection_name}; index int }}\nfunc (v {collection_name}) Iter() *{collection_name}Iter {{ return &{collection_name}Iter{{view:v}} }}\nfunc (it *{collection_name}Iter) Next() ({item_ty},bool) {{ value,ok:=it.view.At(it.index);it.index++;return value,ok }}\n"));
+        output.push_str(&format!("type {collection_name}Iter struct{{ view {collection_name}; index int; decoder wireDecoder }}\nfunc (v {collection_name}) Iter() *{collection_name}Iter {{ return &{collection_name}Iter{{view:v,decoder:wireDecoder{{b:v.wire,p:v.start}}}} }}\nfunc (it *{collection_name}Iter) Next() ({item_ty},bool) {{ var zero {item_ty};if it.index>=it.view.count{{return zero,false}};value,e:={item_name}(&it.decoder);if e!=nil{{return zero,false}};it.index++;return value,true }}\n"));
     }
     output.push_str(&format!("type {name}LazyView struct{{"));
     for field in &item.fields {
@@ -526,7 +526,7 @@ fn generate_go_lazy_view_enum(item: &crate::Enum, schema: &Schema, output: &mut 
         }
         output.push_str("return v,e}\n");
         output.push_str(&format!("func (v {collection_name}) At(i int) ({item_ty},bool) {{ var zero {item_ty}; if i<0||i>=v.count{{return zero,false}}; d:=wireDecoder{{b:v.wire,p:v.start}}; var value {item_ty}; var e error; for n:=0;n<=i;n++{{value,e={item_name}(&d);if e!=nil{{return zero,false}}}}; return value,true }}\n"));
-        output.push_str(&format!("type {collection_name}Iter struct{{ view {collection_name}; index int }}\nfunc (v {collection_name}) Iter() *{collection_name}Iter {{ return &{collection_name}Iter{{view:v}} }}\nfunc (it *{collection_name}Iter) Next() ({item_ty},bool) {{ value,ok:=it.view.At(it.index);it.index++;return value,ok }}\n"));
+        output.push_str(&format!("type {collection_name}Iter struct{{ view {collection_name}; index int; decoder wireDecoder }}\nfunc (v {collection_name}) Iter() *{collection_name}Iter {{ return &{collection_name}Iter{{view:v,decoder:wireDecoder{{b:v.wire,p:v.start}}}} }}\nfunc (it *{collection_name}Iter) Next() ({item_ty},bool) {{ var zero {item_ty};if it.index>=it.view.count{{return zero,false}};value,e:={item_name}(&it.decoder);if e!=nil{{return zero,false}};it.index++;return value,true }}\n"));
     }
     output.push_str(&format!(
         "type {name}LazyView interface{{is{name}LazyView()}}\n"
@@ -874,7 +874,7 @@ pub fn generate_typescript_binding(schema: &Schema) -> String {
         .replace("class WireDecoder {", "export class WireDecoder {")
         .replace("constructor(private readonly b: Uint8Array) {} take(n: number): Uint8Array", "constructor(private readonly b: Uint8Array, p = 0) { this.p = p; } position(): number { return this.p; } take(n: number): Uint8Array")
         .replace("done(): void { if (this.p !== this.b.length)", "seek(position: number): void { if (position < 0 || position > this.b.length) throw new Error('invalid decoder position'); this.p = position; } done(): void { if (this.p !== this.b.length)");
-    output.push_str("export class LazyCollection<T> { constructor(private readonly wire: Uint8Array, private readonly start: number, readonly length: number, private readonly decode: (decoder: WireDecoder) => T) {} at(index: number): T { if (!Number.isInteger(index) || index < 0 || index >= this.length) throw new RangeError('collection index out of range'); const decoder = new WireDecoder(this.wire, this.start); let value!: T; for (let i = 0; i <= index; i++) value = this.decode(decoder); return value; } *[Symbol.iterator](): IterableIterator<T> { for (let i = 0; i < this.length; i++) yield this.at(i); } }\n\n");
+    output.push_str("export class LazyCollection<T> { constructor(private readonly wire: Uint8Array, private readonly start: number, readonly length: number, private readonly decode: (decoder: WireDecoder) => T) {} at(index: number): T { if (!Number.isInteger(index) || index < 0 || index >= this.length) throw new RangeError('collection index out of range'); const decoder = new WireDecoder(this.wire, this.start); let value!: T; for (let i = 0; i <= index; i++) value = this.decode(decoder); return value; } *[Symbol.iterator](): IterableIterator<T> { const decoder = new WireDecoder(this.wire, this.start); for (let i = 0; i < this.length; i++) yield this.decode(decoder); } }\n\n");
     output.push_str("const wireBytesCompare = (a: Uint8Array, b: Uint8Array): number => { for (let i = 0; i < Math.min(a.length, b.length); i++) { if (a[i] < b[i]) return -1; if (a[i] > b[i]) return 1; } return a.length - b.length; };\n\n");
     output = output.replace(
         "validateBinary(layer: number, typeName: string, input: Uint8Array): void;",

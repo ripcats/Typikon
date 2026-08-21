@@ -36,6 +36,7 @@ All notable changes to Typikon since its initial public beta are documented here
 - Added packet-backed Go lazy collection views for direct `Vec`/`Map` enum payloads, including iteration.
 - Added matching packet-backed TypeScript `LazyCollection` views for direct enum collection payloads.
 - Added strict sorted/unique key validation while scanning Go lazy enum maps.
+- Made Go and TypeScript lazy iterators decode collections sequentially in O(n) instead of rescanning from the beginning for every element.
 
 ### Changed
 

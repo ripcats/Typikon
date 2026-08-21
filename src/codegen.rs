@@ -218,6 +218,72 @@ fn generate_struct(item: &Struct, output: &mut String) {
         }
     }
     output.push_str("        size\n    }\n}\n");
+    generate_borrowed_struct(item, output);
+}
+
+fn generate_borrowed_struct(item: &Struct, output: &mut String) {
+    if !item.fields.iter().any(|field| is_borrowed_type(&field.ty)) {
+        return;
+    }
+
+    output.push_str("#[derive(Debug, Clone, PartialEq)]\n");
+    output.push_str(&format!("pub struct {}Ref<'a> {{\n", item.name));
+    for field in &item.fields {
+        output.push_str(&format!(
+            "    pub {}: {},\n",
+            field.name,
+            borrowed_rust_field_type(field)
+        ));
+    }
+    output.push_str("}\n");
+    output.push_str(&format!("impl<'a> {}Ref<'a> {{ pub fn decode_borrowed(bytes: &'a [u8]) -> Result<Self, typikon::WireError> {{ typikon::decode_borrowed_value(bytes) }} }}\n", item.name));
+    output.push_str(&format!(
+        "impl<'a> typikon::BorrowedWireCodec<'a> for {}Ref<'a> {{\n",
+        item.name
+    ));
+    output.push_str("    fn decode_borrowed(decoder: &mut typikon::Decoder<'a>) -> Result<Self, typikon::WireError> {\n");
+    output.push_str(&format!(
+        "        decoder.expect_cid_bytes(&{}_CID_BYTES)?;\n",
+        item.name.to_uppercase()
+    ));
+    for field in &item.fields {
+        let decode = borrowed_decode_expression(&field.ty);
+        if let Some(guard) = &field.guard {
+            let (owner, bit) = guard.split_once('.').unwrap_or(("flags", guard));
+            let owner_type = item
+                .fields
+                .iter()
+                .find(|candidate| candidate.name == owner)
+                .map(|candidate| rust_type(&candidate.ty))
+                .unwrap_or_else(|| owner.to_owned());
+            output.push_str(&format!(
+                "        let {}: {} = if {}.contains({}::{}) {{ Some({}) }} else {{ None }};\n",
+                field.name,
+                borrowed_rust_field_type(field),
+                owner,
+                owner_type,
+                const_name(bit),
+                decode
+            ));
+        } else {
+            output.push_str(&format!(
+                "        let {}: {} = {};\n",
+                field.name,
+                borrowed_rust_field_type(field),
+                decode
+            ));
+        }
+    }
+    output.push_str("        Ok(Self { ");
+    output.push_str(
+        &item
+            .fields
+            .iter()
+            .map(|field| field.name.clone())
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    output.push_str(" })\n    }\n}\n");
 }
 
 fn generate_enum(item: &Enum, output: &mut String) {
@@ -444,6 +510,31 @@ fn rust_field_type(field: &Field) -> String {
     }
 }
 
+fn borrowed_rust_field_type(field: &Field) -> String {
+    let ty = match &field.ty {
+        Type::Primitive(name) if name == "String" => "&'a str".into(),
+        ty if is_byte_vec(ty) => "&'a [u8]".into(),
+        ty => rust_type(ty),
+    };
+    if field.guard.is_some() {
+        format!("Option<{ty}>")
+    } else {
+        ty
+    }
+}
+
+fn borrowed_decode_expression(ty: &Type) -> &'static str {
+    match ty {
+        Type::Primitive(name) if name == "String" => "decoder.string_borrowed()?",
+        ty if is_byte_vec(ty) => "decoder.bytes_borrowed()?",
+        _ => "typikon::WireCodec::decode(decoder)?",
+    }
+}
+
+fn is_borrowed_type(ty: &Type) -> bool {
+    matches!(ty, Type::Primitive(name) if name == "String") || is_byte_vec(ty)
+}
+
 fn rust_type(ty: &Type) -> String {
     match ty {
         Type::Primitive(name) => match name.as_str() {
@@ -522,7 +613,7 @@ mod tests {
     #[test]
     fn generates_bulk_codec_for_byte_vectors() {
         let schema = parse_schema(
-            "#[version(1)] struct Blob { data: Vec<u8>, } enum Event { Upload { data: Vec<u8>, }, Empty, }",
+            "#[version(1)] struct Blob { name: String, data: Vec<u8>, } enum Event { Upload { data: Vec<u8>, }, Empty, }",
         )
         .unwrap();
         let generated = generate_rust(&schema);
@@ -530,6 +621,11 @@ mod tests {
         assert!(generated.contains("let data: Vec<u8> = decoder.bytes()?;"));
         assert!(generated.contains("encoder.bytes(data)?;"));
         assert!(generated.contains("varint_len(self.data.len() as u64)"));
+        assert!(generated.contains("pub struct BlobRef<'a>"));
+        assert!(generated.contains("pub name: &'a str"));
+        assert!(generated.contains("pub data: &'a [u8]"));
+        assert!(generated.contains("decoder.string_borrowed()?"));
+        assert!(generated.contains("decoder.bytes_borrowed()?"));
     }
 
     #[test]

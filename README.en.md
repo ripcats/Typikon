@@ -9,7 +9,7 @@
 
 **Typikon is a schema language and compiler for a typed binary wire protocol.**
 
-Define the contract in a human-readable `.typ` schema — Typikon validates its semantics and produces a schema-specific Rust wire core, a public schema with computed **Constructor ID (C-ID)** values, and official cross-platform adapters for Python, Go, and TypeScript.
+Define the contract in a human-readable `.typ` schema — Typikon validates its semantics and produces a schema-specific Rust wire core, a public schema with computed **Constructor ID (C-ID)** values, and official cross-platform adapters for Python, Go, and TypeScript. The Rust core supports zero-copy borrowed views for strings, bytes, and collections, while language adapters expose view or memoryview APIs within the ownership model of each runtime.
 
 > **Beta release.** The project builds, runs tests, and generates working artifacts, but the protocol format and C-ID rules may still change.
 
@@ -26,7 +26,7 @@ schema.typ
     └── generated Python / Go / TypeScript adapters
 ~~~
 
-The wire format remains binary. JSON is used only at a language/native boundary when convenient; it is not the Typikon wire format.
+The wire format remains binary. JSON is not part of Typikon's public wire or typed Go/TypeScript codec APIs; Python crosses the PyO3 boundary directly.
 
 Typikon is designed as a cross-platform protocol. The project currently provides official adapters for **Python**, **Go**, and **TypeScript**; the set of implementations can grow over time through the community and future official bindings.
 
@@ -128,19 +128,6 @@ Supported types:
 | User-defined types | `struct`, `enum`, and flags names |
 
 `Vec<T>` can be nested: `Vec<Vec<u8>>`, `Map<String, Vec<Message>>`. A `Map<K, V>` key must be primitive, except `f32` and `f64`; pairs are encoded in sorted order.
-
-## Zero-copy decoding — beta
-
-The generated Rust layer emits borrowed views for structures with direct `String` and `Vec<u8>` fields and recursively propagates them through nested named structures:
-
-~~~rust
-let message = MessageRef::decode_borrowed(&packet)?;
-let text: &str = message.text;
-~~~
-
-The resulting `&str` and `&[u8]` point directly into the input packet buffer, so the buffer must outlive the view. For example, `MessageRef.sender` has type `UserRef<'a>`, while `roles`, `attachments`, and `metadata` are lazy borrowed views. Their iterators decode elements on demand without creating an owned `Vec`/`BTreeMap`; language-bridge objects remain owned values for now.
-
-The runtime API is public: `typikon::BorrowedWireCodec`, `typikon::decode_borrowed_value`, `typikon::BorrowedVec`, and `typikon::BorrowedMap` are exported from the crate root. Go exposes generated `Borrow<Type>` views with `[]byte` slices, while TypeScript exposes `decode<Type>View` with `Uint8Array.subarray`; both retain the original packet buffer. Python exposes `borrowed_<type>` as a validated `memoryview`; typed Python strings and containers are still materialized by Python itself.
 
 For transport-level framing, `Encoder` also provides `write_vectored`: a header, packet, and trailer can be sent with one vectored write without an intermediate concatenation. The API is transport-neutral and works for TCP+TLS adapters; QUIC, WebSocket, and WebTransport can use the same packet buffer with their own message/frame boundaries.
 

@@ -9,7 +9,7 @@
 
 **Typikon — язык схем и компилятор для типизированного бинарного wire-протокола.**
 
-Опишите контракт в человекочитаемой схеме `.typ` — Typikon проверит её семантику и выпустит schema-specific Rust wire core, публичную схему с вычисленными **Constructor ID (C-ID)** и официальные кроссплатформенные адаптеры для Python, Go и TypeScript.
+Опишите контракт в человекочитаемой схеме `.typ` — Typikon проверит её семантику и выпустит schema-specific Rust wire core, публичную схему с вычисленными **Constructor ID (C-ID)** и официальные кроссплатформенные адаптеры для Python, Go и TypeScript. Rust core поддерживает zero-copy borrowed views для строк, bytes и коллекций, а языковые адаптеры предоставляют соответствующие view/memoryview API в пределах возможностей своего runtime.
 
 > **Beta-версия.** Проект уже собирается, тестируется и генерирует рабочие артефакты, но формат протокола и правила вычисления C-ID ещё могут измениться.
 
@@ -128,19 +128,6 @@ struct Attachment {
 | Пользовательские типы | имена `struct`, `enum` и flags |
 
 `Vec<T>` может быть вложенным: `Vec<Vec<u8>>`, `Map<String, Vec<Message>>`. Ключ `Map<K, V>` должен быть primitive-типом, кроме `f32` и `f64`; пары кодируются в отсортированном порядке.
-
-## Zero-copy decode — beta
-
-Generated Rust layer создаёт borrowed-view для структур с прямыми полями `String` и `Vec<u8>`, а также рекурсивно протягивает view через вложенные named structures:
-
-~~~rust
-let message = MessageRef::decode_borrowed(&packet)?;
-let text: &str = message.text;
-~~~
-
-`&str` и `&[u8]` указывают прямо внутрь входного packet buffer, поэтому buffer обязан жить дольше view. Например, `MessageRef.sender` имеет тип `UserRef<'a>`, а `roles`, `attachments` и `metadata` представлены lazy borrowed views. Их итераторы декодируют элементы по мере чтения, без создания owned `Vec`/`BTreeMap`; объекты language bridge пока остаются owned values.
-
-Runtime API для этого публичный: `typikon::BorrowedWireCodec`, `typikon::decode_borrowed_value`, `typikon::BorrowedVec` и `typikon::BorrowedMap` экспортируются из crate root. Go получает `Borrow<Type>` с `[]byte`-срезами, TypeScript — `decode<Type>View` с `Uint8Array.subarray`; оба view сохраняют исходный packet buffer. Python предоставляет `borrowed_<type>` как валидируемый `memoryview`; typed `str` и контейнеры Python по-прежнему материализуются правилами самого Python.
 
 Для transport-level framing `Encoder` также предоставляет `write_vectored`: header, packet и trailer можно отправить через один vectored write без промежуточной конкатенации. API не привязан к TCP и подходит для TCP+TLS-адаптеров; QUIC, WebSocket и WebTransport могут использовать тот же готовый packet buffer и собственные message/frame boundaries.
 

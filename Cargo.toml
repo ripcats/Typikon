@@ -10,3 +10,8 @@ crate-type = ["rlib", "cdylib", "staticlib"]
 blake3 = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+[[bench]]
+name = "wire"
+harness = false
+test = false

@@ -26,6 +26,18 @@ pub struct Encoder {
 pub trait WireCodec: Sized {
     fn encode(&self, encoder: &mut Encoder) -> Result<(), WireError>;
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self, WireError>;
+    fn encoded_len(&self) -> usize {
+        0
+    }
+}
+
+pub const fn varint_len(value: u64) -> usize {
+    let bits = u64::BITS - value.leading_zeros();
+    if bits == 0 {
+        1
+    } else {
+        bits.div_ceil(7) as usize
+    }
 }
 
 impl Encoder {
@@ -299,7 +311,7 @@ impl<'a> Decoder<'a> {
 }
 
 macro_rules! primitive_codec {
-    ($type:ty, $encode:ident, $decode:ident) => {
+    ($type:ty, $encode:ident, $decode:ident, $size:expr) => {
         impl WireCodec for $type {
             fn encode(&self, encoder: &mut Encoder) -> Result<(), WireError> {
                 encoder.$encode(*self)
@@ -307,23 +319,26 @@ macro_rules! primitive_codec {
             fn decode(decoder: &mut Decoder<'_>) -> Result<Self, WireError> {
                 decoder.$decode()
             }
+            fn encoded_len(&self) -> usize {
+                $size
+            }
         }
     };
 }
 
-primitive_codec!(u8, u8, u8);
-primitive_codec!(u16, u16, u16);
-primitive_codec!(u32, u32, u32);
-primitive_codec!(u64, u64, u64);
-primitive_codec!(i32, i32, i32);
-primitive_codec!(u128, u128, u128);
-primitive_codec!(i8, i8, i8);
-primitive_codec!(i16, i16, i16);
-primitive_codec!(i64, i64, i64);
-primitive_codec!(i128, i128, i128);
-primitive_codec!(f32, f32, f32);
-primitive_codec!(f64, f64, f64);
-primitive_codec!(bool, bool, bool);
+primitive_codec!(u8, u8, u8, 1);
+primitive_codec!(u16, u16, u16, 2);
+primitive_codec!(u32, u32, u32, 4);
+primitive_codec!(u64, u64, u64, 8);
+primitive_codec!(i32, i32, i32, 4);
+primitive_codec!(u128, u128, u128, 16);
+primitive_codec!(i8, i8, i8, 1);
+primitive_codec!(i16, i16, i16, 2);
+primitive_codec!(i64, i64, i64, 8);
+primitive_codec!(i128, i128, i128, 16);
+primitive_codec!(f32, f32, f32, 4);
+primitive_codec!(f64, f64, f64, 8);
+primitive_codec!(bool, bool, bool, 1);
 
 impl WireCodec for String {
     fn encode(&self, encoder: &mut Encoder) -> Result<(), WireError> {
@@ -331,6 +346,9 @@ impl WireCodec for String {
     }
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self, WireError> {
         decoder.string()
+    }
+    fn encoded_len(&self) -> usize {
+        varint_len(self.len() as u64).saturating_add(self.len())
     }
 }
 
@@ -352,6 +370,12 @@ impl<T: WireCodec> WireCodec for Vec<T> {
             result.push(T::decode(decoder)?);
         }
         Ok(result)
+    }
+    fn encoded_len(&self) -> usize {
+        self.iter()
+            .fold(varint_len(self.len() as u64), |size, item| {
+                size.saturating_add(item.encoded_len())
+            })
     }
 }
 
@@ -378,6 +402,13 @@ impl<K: WireCodec + Ord, V: WireCodec> WireCodec for BTreeMap<K, V> {
             }
         }
         Ok(result)
+    }
+    fn encoded_len(&self) -> usize {
+        self.iter()
+            .fold(varint_len(self.len() as u64), |size, (key, value)| {
+                size.saturating_add(key.encoded_len())
+                    .saturating_add(value.encoded_len())
+            })
     }
 }
 
@@ -539,6 +570,14 @@ mod tests {
         value.1.encode(&mut encoder).unwrap();
         value.2.encode(&mut encoder).unwrap();
         let bytes = encoder.finish().unwrap();
+        assert_eq!(
+            bytes.len(),
+            value
+                .0
+                .encoded_len()
+                .saturating_add(value.1.encoded_len())
+                .saturating_add(value.2.encoded_len())
+        );
         assert_eq!(&bytes[0..2], &[12, 208]);
         let mut decoder = Decoder::new(&bytes, LIMIT).unwrap();
         assert_eq!(String::decode(&mut decoder).unwrap(), value.0);

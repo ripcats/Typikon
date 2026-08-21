@@ -122,7 +122,7 @@ fn generate_struct(item: &Struct, output: &mut String) {
         "impl typikon::TypikonCodec for {} {{\n",
         item.name
     ));
-    output.push_str("    fn encode(&self) -> Result<Vec<u8>, typikon::WireError> { let mut encoder = typikon::Encoder::with_capacity(typikon::DEFAULT_MAX_PACKET_SIZE, 128); typikon::WireCodec::encode(self, &mut encoder)?; encoder.finish() }\n");
+    output.push_str("    fn encode(&self) -> Result<Vec<u8>, typikon::WireError> { typikon::encode_value(self) }\n");
     output.push_str("    fn decode(bytes: &[u8]) -> Result<Self, typikon::WireError> { let mut decoder = typikon::Decoder::new(bytes, typikon::DEFAULT_MAX_PACKET_SIZE)?; let value = <Self as typikon::WireCodec>::decode(&mut decoder)?; if decoder.is_finished() { Ok(value) } else { Err(typikon::WireError::MalformedConstructor) } }\n}\n");
     output.push_str(&format!("impl typikon::WireCodec for {} {{\n", item.name));
     output.push_str("    fn encode(&self, encoder: &mut typikon::Encoder) -> Result<(), typikon::WireError> {\n");
@@ -176,7 +176,25 @@ fn generate_struct(item: &Struct, output: &mut String) {
             .collect::<Vec<_>>()
             .join(", "),
     );
-    output.push_str(" })\n    }\n}\n");
+    output.push_str(" })\n    }\n    fn encoded_len(&self) -> usize {\n        let mut size = typikon::CID_BYTES;\n");
+    for field in &item.fields {
+        if let Some(guard) = &field.guard {
+            let (owner, bit) = guard.split_once('.').unwrap_or(("flags", guard));
+            let owner_type = item
+                .fields
+                .iter()
+                .find(|candidate| candidate.name == owner)
+                .map(|candidate| rust_type(&candidate.ty))
+                .unwrap_or_else(|| owner.to_owned());
+            output.push_str(&format!("        if self.{owner}.contains({owner_type}::{}) {{ if let Some(value) = &self.{} {{ size = size.saturating_add(typikon::WireCodec::encoded_len(value)); }} }}\n", const_name(bit), field.name));
+        } else {
+            output.push_str(&format!(
+                "        size = size.saturating_add(typikon::WireCodec::encoded_len(&self.{}));\n",
+                field.name
+            ));
+        }
+    }
+    output.push_str("        size\n    }\n}\n");
 }
 
 fn generate_enum(item: &Enum, output: &mut String) {
@@ -225,7 +243,7 @@ fn generate_enum(item: &Enum, output: &mut String) {
         "impl typikon::TypikonCodec for {} {{\n",
         item.name
     ));
-    output.push_str("    fn encode(&self) -> Result<Vec<u8>, typikon::WireError> { let mut encoder = typikon::Encoder::with_capacity(typikon::DEFAULT_MAX_PACKET_SIZE, 128); typikon::WireCodec::encode(self, &mut encoder)?; encoder.finish() }\n");
+    output.push_str("    fn encode(&self) -> Result<Vec<u8>, typikon::WireError> { typikon::encode_value(self) }\n");
     output.push_str("    fn decode(bytes: &[u8]) -> Result<Self, typikon::WireError> { let mut decoder = typikon::Decoder::new(bytes, typikon::DEFAULT_MAX_PACKET_SIZE)?; let value = <Self as typikon::WireCodec>::decode(&mut decoder)?; if decoder.is_finished() { Ok(value) } else { Err(typikon::WireError::MalformedConstructor) } }\n}\n");
     output.push_str(&format!("impl typikon::WireCodec for {} {{\n", item.name));
     output.push_str("    fn encode(&self, encoder: &mut typikon::Encoder) -> Result<(), typikon::WireError> { match self {\n");
@@ -286,7 +304,37 @@ fn generate_enum(item: &Enum, output: &mut String) {
             ));
         }
     }
-    output.push_str("        _ => Err(typikon::WireError::UnknownCId), } }\n}\n");
+    output.push_str("        _ => Err(typikon::WireError::UnknownCId), } }\n    fn encoded_len(&self) -> usize { match self {\n");
+    for variant in &item.variants {
+        if variant.fields.is_empty() {
+            output.push_str(&format!(
+                "        Self::{} => typikon::CID_BYTES,\n",
+                variant.name
+            ));
+        } else {
+            let fields = variant
+                .fields
+                .iter()
+                .map(|field| field.name.clone())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let size = variant
+                .fields
+                .iter()
+                .map(|field| {
+                    format!(
+                        ".saturating_add(typikon::WireCodec::encoded_len({}))",
+                        field.name
+                    )
+                })
+                .collect::<String>();
+            output.push_str(&format!(
+                "        Self::{} {{ {} }} => typikon::CID_BYTES{},\n",
+                variant.name, fields, size
+            ));
+        }
+    }
+    output.push_str("    } }\n}\n");
 }
 
 fn generate_unit_enum(item: &Enum, output: &mut String) {
@@ -304,7 +352,7 @@ fn generate_unit_enum(item: &Enum, output: &mut String) {
         "impl typikon::TypikonCodec for {} {{\n",
         item.name
     ));
-    output.push_str("    fn encode(&self) -> Result<Vec<u8>, typikon::WireError> { let mut encoder = typikon::Encoder::with_capacity(typikon::DEFAULT_MAX_PACKET_SIZE, 128); typikon::WireCodec::encode(self, &mut encoder)?; encoder.finish() }\n");
+    output.push_str("    fn encode(&self) -> Result<Vec<u8>, typikon::WireError> { typikon::encode_value(self) }\n");
     output.push_str("    fn decode(bytes: &[u8]) -> Result<Self, typikon::WireError> { let mut decoder = typikon::Decoder::new(bytes, typikon::DEFAULT_MAX_PACKET_SIZE)?; let value = <Self as typikon::WireCodec>::decode(&mut decoder)?; if decoder.is_finished() { Ok(value) } else { Err(typikon::WireError::MalformedConstructor) } }\n}\n");
     output.push_str(&format!("impl typikon::WireCodec for {} {{\n", item.name));
     output.push_str("    fn encode(&self, encoder: &mut typikon::Encoder) -> Result<(), typikon::WireError> { encoder.u64(*self as u64) }\n");
@@ -316,7 +364,7 @@ fn generate_unit_enum(item: &Enum, output: &mut String) {
             variant.name
         ));
     }
-    output.push_str("        _ => Err(typikon::WireError::InvalidEnum),\n    } }\n}\n");
+    output.push_str("        _ => Err(typikon::WireError::InvalidEnum),\n    } }\n    fn encoded_len(&self) -> usize { 8 }\n}\n");
 }
 
 fn generate_flags(item: &Flags, output: &mut String) {
@@ -338,7 +386,7 @@ fn generate_flags(item: &Flags, output: &mut String) {
         item.underlying
     ));
     output.push_str("}\n");
-    output.push_str(&format!("impl typikon::WireCodec for {} {{ fn encode(&self, encoder: &mut typikon::Encoder) -> Result<(), typikon::WireError> {{ self.0.encode(encoder) }} fn decode(decoder: &mut typikon::Decoder<'_>) -> Result<Self, typikon::WireError> {{ Ok(Self(typikon::WireCodec::decode(decoder)?)) }} }}\n", item.name));
+    output.push_str(&format!("impl typikon::WireCodec for {} {{ fn encode(&self, encoder: &mut typikon::Encoder) -> Result<(), typikon::WireError> {{ self.0.encode(encoder) }} fn decode(decoder: &mut typikon::Decoder<'_>) -> Result<Self, typikon::WireError> {{ Ok(Self(typikon::WireCodec::decode(decoder)?)) }} fn encoded_len(&self) -> usize {{ typikon::WireCodec::encoded_len(&self.0) }} }}\n", item.name));
 }
 
 fn rust_field_type(field: &Field) -> String {
@@ -405,6 +453,8 @@ mod tests {
         assert!(generated.contains("pub flags: F,"));
         assert!(generated.contains("pub value: Option<u64>,"));
         assert!(generated.contains("let value: Option<u64> = if flags.contains(F::READY)"));
+        assert!(generated.contains("fn encoded_len(&self) -> usize"));
+        assert!(generated.contains("size = size.saturating_add"));
     }
 
     #[test]

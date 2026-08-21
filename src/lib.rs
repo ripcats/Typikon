@@ -32,7 +32,9 @@ pub use constructor::{
 pub use error::ParseError;
 pub use fingerprint::{canonical_form, constructor_cid as struct_constructor_cid, variant_cid};
 pub use layer::{LayerSupport, LayerVersionNotSupported};
-pub use limits::{MAX_NESTING_DEPTH, MAX_PACKET_SIZE};
+pub use limits::{
+    DecodeLimits, MAX_BYTES_FIELD_SIZE, MAX_COLLECTION_ITEMS, MAX_NESTING_DEPTH, MAX_PACKET_SIZE,
+};
 pub use parser::parse_schema;
 pub use validate::validate;
 pub use wire::{

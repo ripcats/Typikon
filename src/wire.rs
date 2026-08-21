@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 use std::io::{self, IoSlice, Write};
 use std::marker::PhantomData;
 
+use crate::limits::DecodeLimits;
+
 const MAX_VARINT_BYTES: usize = 10;
 const DEFAULT_ENCODER_CAPACITY: usize = 128;
 
@@ -281,6 +283,10 @@ impl Encoder {
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
     }
+    /// Clears the encoded packet while retaining the allocation for reuse.
+    pub fn reset(&mut self) {
+        self.bytes.clear();
+    }
     pub fn len(&self) -> usize {
         self.bytes.len()
     }
@@ -444,18 +450,24 @@ fn encode_varint(mut value: u64, output: &mut [u8; MAX_VARINT_BYTES]) -> usize {
 pub struct Decoder<'a> {
     bytes: &'a [u8],
     position: usize,
-    max_size: usize,
+    limits: DecodeLimits,
 }
 
 impl<'a> Decoder<'a> {
     pub fn new(bytes: &'a [u8], max_size: usize) -> Result<Self, WireError> {
-        if bytes.len() > max_size {
+        let mut limits = DecodeLimits::default();
+        limits.max_packet_size = max_size;
+        limits.max_bytes_field_size = max_size;
+        Self::with_limits(bytes, limits)
+    }
+    pub fn with_limits(bytes: &'a [u8], limits: DecodeLimits) -> Result<Self, WireError> {
+        if bytes.len() > limits.max_packet_size {
             Err(WireError::PacketTooLarge)
         } else {
             Ok(Self {
                 bytes,
                 position: 0,
-                max_size,
+                limits,
             })
         }
     }
@@ -536,14 +548,14 @@ impl<'a> Decoder<'a> {
     }
     pub fn bytes_borrowed(&mut self) -> Result<&'a [u8], WireError> {
         let len = usize::try_from(self.varint()?).map_err(|_| WireError::IntegerOverflow)?;
-        if len > self.max_size {
+        if len > self.limits.max_bytes_field_size {
             return Err(WireError::PacketTooLarge);
         }
         self.read_slice(len)
     }
     pub fn skip_bytes(&mut self) -> Result<(), WireError> {
         let len = usize::try_from(self.varint()?).map_err(|_| WireError::IntegerOverflow)?;
-        if len > self.max_size {
+        if len > self.limits.max_bytes_field_size {
             return Err(WireError::PacketTooLarge);
         }
         self.read_slice(len).map(|_| ())
@@ -561,7 +573,7 @@ impl<'a> Decoder<'a> {
         &mut self,
     ) -> Result<BorrowedVec<'a, T>, WireError> {
         let count = usize::try_from(self.varint()?).map_err(|_| WireError::IntegerOverflow)?;
-        if count > self.max_size {
+        if count > self.limits.max_collection_items {
             return Err(WireError::PacketTooLarge);
         }
         let start = self.position;
@@ -572,7 +584,7 @@ impl<'a> Decoder<'a> {
         Ok(BorrowedVec {
             bytes,
             count,
-            max_size: self.max_size,
+            max_size: self.limits.max_packet_size,
             marker: PhantomData,
         })
     }
@@ -580,7 +592,7 @@ impl<'a> Decoder<'a> {
         &mut self,
     ) -> Result<BorrowedMap<'a, K, V>, WireError> {
         let count = usize::try_from(self.varint()?).map_err(|_| WireError::IntegerOverflow)?;
-        if count > self.max_size {
+        if count > self.limits.max_collection_items {
             return Err(WireError::PacketTooLarge);
         }
         let start = self.position;
@@ -592,13 +604,13 @@ impl<'a> Decoder<'a> {
         Ok(BorrowedMap {
             bytes,
             count,
-            max_size: self.max_size,
+            max_size: self.limits.max_packet_size,
             marker: PhantomData,
         })
     }
     pub fn skip_vec<T: BorrowedWireCodec<'a>>(&mut self) -> Result<(), WireError> {
         let count = usize::try_from(self.varint()?).map_err(|_| WireError::IntegerOverflow)?;
-        if count > self.max_size {
+        if count > self.limits.max_collection_items {
             return Err(WireError::PacketTooLarge);
         }
         for _ in 0..count {
@@ -610,7 +622,7 @@ impl<'a> Decoder<'a> {
         &mut self,
     ) -> Result<(), WireError> {
         let count = usize::try_from(self.varint()?).map_err(|_| WireError::IntegerOverflow)?;
-        if count > self.max_size {
+        if count > self.limits.max_collection_items {
             return Err(WireError::PacketTooLarge);
         }
         for _ in 0..count {
@@ -734,7 +746,7 @@ impl<T: WireCodec> WireCodec for Vec<T> {
     }
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self, WireError> {
         let count = usize::try_from(decoder.varint()?).map_err(|_| WireError::IntegerOverflow)?;
-        if count > decoder.max_size {
+        if count > decoder.limits.max_collection_items {
             return Err(WireError::PacketTooLarge);
         }
         let capacity = match T::FIXED_ENCODED_LEN {
@@ -777,7 +789,7 @@ impl<K: WireCodec + Ord, V: WireCodec> WireCodec for BTreeMap<K, V> {
     }
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self, WireError> {
         let count = usize::try_from(decoder.varint()?).map_err(|_| WireError::IntegerOverflow)?;
-        if count > decoder.max_size {
+        if count > decoder.limits.max_collection_items {
             return Err(WireError::PacketTooLarge);
         }
         if let (Some(key_size), Some(value_size)) = (K::FIXED_ENCODED_LEN, V::FIXED_ENCODED_LEN) {
@@ -982,6 +994,45 @@ mod tests {
         let buffer = encoder.finish().unwrap();
         assert_eq!(buffer, [6, b's', b'e', b'c', b'o', b'n', b'd']);
         assert_eq!(buffer.capacity(), capacity);
+    }
+
+    #[test]
+    fn encoder_reset_retains_buffer_for_hot_path_reuse() {
+        let mut encoder = Encoder::with_capacity(LIMIT, 64);
+        encoder.bytes(b"first packet").unwrap();
+        let capacity = encoder.as_bytes().as_ptr();
+        encoder.reset();
+        encoder.bytes(b"second packet").unwrap();
+        assert_eq!(
+            encoder.as_bytes(),
+            &[
+                13, b's', b'e', b'c', b'o', b'n', b'd', b' ', b'p', b'a', b'c', b'k', b'e', b't'
+            ]
+        );
+        assert_eq!(encoder.as_bytes().as_ptr(), capacity);
+    }
+
+    #[test]
+    fn decoder_applies_independent_collection_and_bytes_limits() {
+        let limits = crate::DecodeLimits {
+            max_packet_size: LIMIT,
+            max_collection_items: 2,
+            max_bytes_field_size: 3,
+        };
+        let mut bytes = Encoder::new(LIMIT);
+        bytes.bytes(b"four").unwrap();
+        let packet = bytes.finish().unwrap();
+        let mut decoder = Decoder::with_limits(&packet, limits).unwrap();
+        assert_eq!(decoder.bytes_borrowed(), Err(WireError::PacketTooLarge));
+
+        let mut values = Encoder::new(LIMIT);
+        values.varint(3).unwrap();
+        values.u8(1).unwrap();
+        values.u8(2).unwrap();
+        values.u8(3).unwrap();
+        let packet = values.finish().unwrap();
+        let mut decoder = Decoder::with_limits(&packet, limits).unwrap();
+        assert_eq!(decoder.skip_vec::<u8>(), Err(WireError::PacketTooLarge));
     }
 
     #[test]

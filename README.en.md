@@ -273,9 +273,11 @@ Transport and application logic intentionally remain a separate layer. Typikon f
 
 ## What is actually tested
 
-The current Rust suite contains **40 tests: 37 unit tests and 3 integration tests**. It covers parsing and semantic validation, code generation, reproducible public schemas, the CLI, Layer negotiation, C-IDs, primitive/collection wire round-trips, limits, malformed/truncated input, duplicate map keys, the VarInt corpus, and randomized parser/wire inputs.
+The current Rust suite contains **45 tests: 42 unit tests and 3 integration tests**. It covers parsing and semantic validation, code generation, reproducible public schemas, the CLI, Layer negotiation, C-IDs, primitive/collection wire round-trips, limits, malformed/truncated input, duplicate map keys, canonical VarInt, borrowed decoding, and randomized parser/wire inputs.
 
-The repository also includes build checks for the Python binding and the Go/TypeScript native crates. Full Go package tests and the TypeScript package build depend on external toolchains and are not presented as universally verified by this checkout.
+A reproducible benchmark is available through `cargo bench --bench wire`. It measures encoding, owned/borrowed decoding, and a 64 KiB binary payload separately; results depend on the CPU and build profile and are not a network benchmark.
+
+The repository also includes build checks for the Python binding and the Go/TypeScript native crates. The TypeScript facade is checked with `npm test`; the full Go package test requires an installed Go toolchain.
 
 ## Repository layout
 

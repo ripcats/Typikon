@@ -161,6 +161,7 @@ impl<'a> CollectionMessage<'a> {
   pub const VT_ATTACHMENTS: flatbuffers::VOffsetT = 8;
   pub const VT_METADATA_KEYS: flatbuffers::VOffsetT = 10;
   pub const VT_METADATA_VALUES: flatbuffers::VOffsetT = 12;
+  pub const VT_PAYLOAD: flatbuffers::VOffsetT = 14;
 
   #[inline]
   pub fn init_from_table(table: flatbuffers::Table<'a>) -> Self {
@@ -173,6 +174,7 @@ impl<'a> CollectionMessage<'a> {
   ) -> flatbuffers::WIPOffset<CollectionMessage<'bldr>> {
     let mut builder = CollectionMessageBuilder::new(_fbb);
     builder.add_id(args.id);
+    if let Some(x) = args.payload { builder.add_payload(x); }
     if let Some(x) = args.metadata_values { builder.add_metadata_values(x); }
     if let Some(x) = args.metadata_keys { builder.add_metadata_keys(x); }
     if let Some(x) = args.attachments { builder.add_attachments(x); }
@@ -201,6 +203,10 @@ impl<'a> CollectionMessage<'a> {
   pub fn metadata_values(&self) -> Option<flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<&'a str>>> {
     self._tab.get::<flatbuffers::ForwardsUOffset<flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<&'a str>>>>(CollectionMessage::VT_METADATA_VALUES, None)
   }
+  #[inline]
+  pub fn payload(&self) -> Option<&'a [u8]> {
+    self._tab.get::<flatbuffers::ForwardsUOffset<flatbuffers::Vector<'a, u8>>>(CollectionMessage::VT_PAYLOAD, None).map(|v| v.safe_slice())
+  }
 }
 
 impl flatbuffers::Verifiable for CollectionMessage<'_> {
@@ -215,6 +221,7 @@ impl flatbuffers::Verifiable for CollectionMessage<'_> {
      .visit_field::<flatbuffers::ForwardsUOffset<flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<Attachment>>>>("attachments", Self::VT_ATTACHMENTS, false)?
      .visit_field::<flatbuffers::ForwardsUOffset<flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<&'_ str>>>>("metadata_keys", Self::VT_METADATA_KEYS, false)?
      .visit_field::<flatbuffers::ForwardsUOffset<flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<&'_ str>>>>("metadata_values", Self::VT_METADATA_VALUES, false)?
+     .visit_field::<flatbuffers::ForwardsUOffset<flatbuffers::Vector<'_, u8>>>("payload", Self::VT_PAYLOAD, false)?
      .finish();
     Ok(())
   }
@@ -225,6 +232,7 @@ pub struct CollectionMessageArgs<'a> {
     pub attachments: Option<flatbuffers::WIPOffset<flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<Attachment<'a>>>>>,
     pub metadata_keys: Option<flatbuffers::WIPOffset<flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<&'a str>>>>,
     pub metadata_values: Option<flatbuffers::WIPOffset<flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<&'a str>>>>,
+    pub payload: Option<flatbuffers::WIPOffset<flatbuffers::Vector<'a, u8>>>,
 }
 impl<'a> Default for CollectionMessageArgs<'a> {
   #[inline]
@@ -235,6 +243,7 @@ impl<'a> Default for CollectionMessageArgs<'a> {
       attachments: None,
       metadata_keys: None,
       metadata_values: None,
+      payload: None,
     }
   }
 }
@@ -265,6 +274,10 @@ impl<'a: 'b, 'b> CollectionMessageBuilder<'a, 'b> {
     self.fbb_.push_slot_always::<flatbuffers::WIPOffset<_>>(CollectionMessage::VT_METADATA_VALUES, metadata_values);
   }
   #[inline]
+  pub fn add_payload(&mut self, payload: flatbuffers::WIPOffset<flatbuffers::Vector<'b , u8>>) {
+    self.fbb_.push_slot_always::<flatbuffers::WIPOffset<_>>(CollectionMessage::VT_PAYLOAD, payload);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut flatbuffers::FlatBufferBuilder<'a>) -> CollectionMessageBuilder<'a, 'b> {
     let start = _fbb.start_table();
     CollectionMessageBuilder {
@@ -287,6 +300,7 @@ impl core::fmt::Debug for CollectionMessage<'_> {
       ds.field("attachments", &self.attachments());
       ds.field("metadata_keys", &self.metadata_keys());
       ds.field("metadata_values", &self.metadata_values());
+      ds.field("payload", &self.payload());
       ds.finish()
   }
 }

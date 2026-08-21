@@ -13,6 +13,7 @@ All notable changes to Typikon since its initial public beta are documented here
 - Added transport-neutral `Encoder::write_vectored` for sending framing segments around a packet without an intermediate concatenation.
 - The checked-in benchmark now includes a collection-heavy messenger path with owned decode, borrowed decode, and lazy iteration measurements.
 - Added a reproducible Typikon/FlatBuffers comparison harness with wire size, encode/decode, iteration, and allocation metrics.
+- Expanded the comparison harness with 64 KiB and 1 MiB binary-payload cases.
 - FlatBuffers comparison now reports verified and unchecked view decoding separately, making validation overhead explicit.
 - Borrowed collection boundary scans now use structural skip paths for length-delimited values and generated nested views.
 - Documented the crate-root zero-copy API and the separate ownership contract still required for language-binding view handles.

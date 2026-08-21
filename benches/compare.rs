@@ -21,6 +21,8 @@ use flatbuffers_generated::typikon_bench as fb;
 
 const N: usize = 100_000;
 const HEAVY_N: usize = 1_000;
+const PAYLOAD_N: usize = 100;
+const LARGE_PAYLOAD_N: usize = 10;
 const C: [u8; 8] = [0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80];
 const A: [u8; 8] = [0x80, 0x70, 0x60, 0x50, 0x40, 0x30, 0x20, 0x10];
 
@@ -42,6 +44,7 @@ struct Data {
     roles: Vec<String>,
     attachments: Vec<(String, String, u64)>,
     metadata: BTreeMap<String, String>,
+    payload: Vec<u8>,
 }
 struct AttachmentView<'a> {
     name: &'a str,
@@ -81,6 +84,7 @@ fn data() -> Data {
             ("locale".into(), "en".into()),
             ("trace".into(), "benchmark".into()),
         ]),
+        payload: Vec::new(),
     }
 }
 fn heavy_data() -> Data {
@@ -105,9 +109,15 @@ fn heavy_data() -> Data {
                 )
             })
             .collect(),
+        payload: Vec::new(),
     }
 }
-fn timed(mut f: impl FnMut()) -> f64 {
+fn payload_data(size: usize) -> Data {
+    let mut value = data();
+    value.payload = vec![0xa5; size];
+    value
+}
+fn timed(f: impl FnMut()) -> f64 {
     timed_n(N, f)
 }
 fn timed_n(iterations: usize, mut f: impl FnMut()) -> f64 {
@@ -145,6 +155,7 @@ fn typikon_encode(v: &Data) -> Vec<u8> {
         e.bytes(k.as_bytes()).unwrap();
         e.bytes(v.as_bytes()).unwrap();
     }
+    e.bytes(&v.payload).unwrap();
     e.finish().unwrap()
 }
 fn typikon_owned(bytes: &[u8]) -> Data {
@@ -164,10 +175,12 @@ fn typikon_owned(bytes: &[u8]) -> Data {
     for _ in 0..n {
         metadata.insert(d.string().unwrap(), d.string().unwrap());
     }
+    let payload = d.bytes().unwrap();
     Data {
         roles,
         attachments,
         metadata,
+        payload,
     }
 }
 fn typikon_view(bytes: &[u8]) -> usize {
@@ -189,6 +202,7 @@ fn typikon_view(bytes: &[u8]) -> usize {
         let (k, v) = x.unwrap();
         total += k.len() + v.len();
     }
+    total += d.bytes_borrowed().unwrap().len();
     total
 }
 
@@ -229,6 +243,7 @@ fn flat_encode(v: &Data) -> Vec<u8> {
     let attachments = b.create_vector(&attachments);
     let keys = b.create_vector(&keys);
     let values = b.create_vector(&values);
+    let payload = b.create_vector(&v.payload);
     let root = fb::CollectionMessage::create(
         &mut b,
         &fb::CollectionMessageArgs {
@@ -237,6 +252,7 @@ fn flat_encode(v: &Data) -> Vec<u8> {
             attachments: Some(attachments),
             metadata_keys: Some(keys),
             metadata_values: Some(values),
+            payload: Some(payload),
         },
     );
     fb::finish_collection_message_buffer(&mut b, root);
@@ -262,10 +278,12 @@ fn flat_owned(bytes: &[u8]) -> Data {
     let metadata = (0..keys.len())
         .map(|i| (keys.get(i).to_owned(), values.get(i).to_owned()))
         .collect();
+    let payload = r.payload().unwrap_or(&[]).to_vec();
     Data {
         roles,
         attachments,
         metadata,
+        payload,
     }
 }
 fn flat_view(bytes: &[u8]) -> usize {
@@ -286,6 +304,7 @@ fn flat_sum(r: fb::CollectionMessage<'_>) -> usize {
         total +=
             r.metadata_keys().unwrap().get(i).len() + r.metadata_values().unwrap().get(i).len();
     }
+    total += r.payload().unwrap_or(&[]).len();
     total
 }
 
@@ -379,4 +398,54 @@ fn main() {
         "case=heavy format=flatbuffers entries=64_roles+256_attachments+64_metadata bytes={} encode_ns={hfe:.2} owned_decode_ns={hfo:.2} verified_view_ns={hfv:.2} unchecked_view_ns={hfvu:.2} allocations_owned={hfoa} allocations_borrowed={hfva}",
         hfw.len()
     );
+
+    for (label, size, iterations) in [
+        ("64k", 64 * 1024, PAYLOAD_N),
+        ("1m", 1024 * 1024, LARGE_PAYLOAD_N),
+    ] {
+        let payload = payload_data(size);
+        let ptw = typikon_encode(&payload);
+        let pfw = flat_encode(&payload);
+        let pte = timed_n(iterations, || {
+            black_box(typikon_encode(&payload));
+        });
+        let pfe = timed_n(iterations, || {
+            black_box(flat_encode(&payload));
+        });
+        let pto = timed_n(iterations, || {
+            black_box(typikon_owned(&ptw));
+        });
+        let pfo = timed_n(iterations, || {
+            black_box(flat_owned(&pfw));
+        });
+        let ptv = timed_n(iterations, || {
+            black_box(typikon_view(&ptw));
+        });
+        let pfv = timed_n(iterations, || {
+            black_box(flat_view(&pfw));
+        });
+        let pfvu = timed_n(iterations, || {
+            black_box(flat_view_unchecked(&pfw));
+        });
+        let ptoa = allocs(|| {
+            black_box(typikon_owned(&ptw));
+        });
+        let pfoa = allocs(|| {
+            black_box(flat_owned(&pfw));
+        });
+        let ptva = allocs(|| {
+            black_box(typikon_view(&ptw));
+        });
+        let pfva = allocs(|| {
+            black_box(flat_view(&pfw));
+        });
+        println!(
+            "case=payload_{label} format=typikon payload_bytes={size} bytes={} encode_ns={pte:.2} owned_decode_ns={pto:.2} borrowed_decode_and_iterate_ns={ptv:.2} allocations_owned={ptoa} allocations_borrowed={ptva}",
+            ptw.len()
+        );
+        println!(
+            "case=payload_{label} format=flatbuffers payload_bytes={size} bytes={} encode_ns={pfe:.2} owned_decode_ns={pfo:.2} verified_view_ns={pfv:.2} unchecked_view_ns={pfvu:.2} allocations_owned={pfoa} allocations_borrowed={pfva}",
+            pfw.len()
+        );
+    }
 }

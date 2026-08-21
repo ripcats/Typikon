@@ -12,6 +12,7 @@ table CollectionMessage {
   attachments:[Attachment];
   metadata_keys:[string];
   metadata_values:[string];
+  payload:[ubyte];
 }
 
 root_type CollectionMessage;

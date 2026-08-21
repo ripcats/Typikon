@@ -6,7 +6,7 @@ Run it with:
 cargo bench --bench compare
 ```
 
-The harness uses a baseline shape (three roles, eight attachments, three metadata entries) and a heavy shape (64 roles, 256 attachments, 64 metadata entries). It reports encoded size, encode time, owned decode time, borrowed decode plus full iteration time, and allocation count for Typikon and FlatBuffers.
+The harness uses a baseline shape (three roles, eight attachments, three metadata entries), a heavy shape (64 roles, 256 attachments, 64 metadata entries), and a binary-payload matrix with 64 KiB and 1 MiB payloads. It reports encoded size, encode time, owned decode time, borrowed decode plus full iteration time, and allocation count for Typikon and FlatBuffers. Large-payload runs use fewer iterations so the comparison stays practical.
 
 FlatBuffers view decoding is reported in two modes: verified (`root_as_collection_message`) and unchecked (`root_as_collection_message_unchecked`). The unchecked path is useful as a raw speed ceiling, but it is not equivalent to Typikon's checked decoder and must only be used when the packet was validated elsewhere.
 

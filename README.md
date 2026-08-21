@@ -11,7 +11,7 @@
 
 Опишите контракт в человекочитаемой схеме `.typ` — Typikon проверит её семантику и выпустит schema-specific Rust wire core, публичную схему с вычисленными **Constructor ID (C-ID)** и официальные кроссплатформенные адаптеры для Python, Go и TypeScript.
 
-Rust core поддерживает zero-copy borrowed views для строк, bytes и lazy-коллекций; Go и TypeScript также генерируют packet-backed lazy collection APIs, а Python сохраняет owner-backed packet `memoryview` в пределах возможностей своего runtime.
+Rust core поддерживает zero-copy borrowed views для строк, bytes и lazy-коллекций; Go и TypeScript генерируют packet-backed lazy collection APIs и owner-preserving typed packet wrappers, а Python сохраняет owner-backed packet `memoryview` в пределах возможностей своего runtime.
 
 > **Beta-версия.** Проект уже собирается, тестируется и генерирует рабочие артефакты, но формат протокола и правила вычисления C-ID ещё могут измениться.
 
@@ -255,7 +255,7 @@ messenger-10.ts              TypeScript facade
 - **Go** — schema-specific native Go wire codec; cgo остаётся для ABI и borrowed validation.
 - **TypeScript** — typed direct wire codec и Node-API native validation addon.
 
-Все адаптеры используют один wire contract. Go codec генерируется как прямой native Go encoder/decoder с borrowed и lazy views, TypeScript — как typed wire codec с lazy views и native Node-API `borrowBinary`, Python — через прямую PyO3-конверсию и owner-backed packet `memoryview`.
+Все адаптеры используют один wire contract. Go codec генерируется как прямой native Go encoder/decoder с borrowed и lazy views, TypeScript — как typed wire codec с lazy views, `BorrowedPacket` и native Node-API `borrowBinary`/`borrowTyped`, Python — через прямую PyO3-конверсию и owner-backed packet `memoryview`. Python typed `str/list/dict` borrowed views намеренно не обещаются: их lifetime и ownership контролируются Python object model.
 
 ## Layer и совместимость
 
@@ -279,7 +279,7 @@ Typikon — собственная schema-driven реализация бинар
 
 Rust suite включает **60 тестов: 57 unit и 3 integration** — parser и semantic validation, code generation, CLI, Layer/C-ID, wire round-trips, limits, malformed input, maps, VarInt, borrowed views, language-view generation, vectored writes и randomized inputs.
 
-Дополнительно проверяются Python/Go/TypeScript bindings и cross-language round-trip (`npm test`, `go test ./bindings/go`, `./tests/cross_language_roundtrip.sh`, `./tests/generated_go_views.sh`). Benchmarks: `cargo bench --bench wire` и `cargo bench --bench compare`; они измеряют wire size, encode/decode, borrowed views и allocations, но не являются сетевым benchmark. Длительная проверка: `TYPIKON_STRESS_SECONDS=172800 ./tests/long_validation.sh`.
+Дополнительно проверяются Python/Go/TypeScript bindings, owner/aliasing, lazy iteration, duplicate/unsorted maps и cross-language round-trip (`(cd bindings/typescript && npm test)`, `go test ./bindings/go`, `./tests/cross_language_roundtrip.sh`, `./tests/generated_go_views.sh`). Benchmarks: `cargo bench --bench wire` и `cargo bench --bench compare`; они измеряют wire size, encode/decode, borrowed views и allocations, но не являются сетевым benchmark. Длительная проверка запускается отдельно: `TYPIKON_STRESS_SECONDS=172800 ./tests/long_validation.sh`.
 
 ## Структура
 

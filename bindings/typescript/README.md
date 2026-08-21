@@ -11,4 +11,4 @@ npm ci
 npm run build
 ```
 
-The generated TypeScript module exposes typed `encode<Name>(value)` / `decode<Name>(wire)` functions and `decode<Name>LazyView(wire)` packet-backed lazy collections. The native module exposes `encodeBinary`, `decodeBinary`, `validateBinary`, and owner-preserving `borrowBinary`; JSON is not used by either path.
+The generated TypeScript module exposes typed `encode<Name>(value)` / `decode<Name>(wire)` functions, `decode<Name>View(wire)`, owner-preserving `borrow<Name>View(wire)`, and `decode<Name>LazyView(wire)` packet-backed lazy collections. The native module exposes `encodeBinary`, `decodeBinary`, `validateBinary`, and owner-preserving `borrowBinary`; the facade combines it with a typed decoder through `borrowTyped`. JSON is not used by either path.

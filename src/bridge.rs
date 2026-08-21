@@ -874,7 +874,7 @@ pub fn generate_typescript_binding(schema: &Schema) -> String {
         .replace("class WireDecoder {", "export class WireDecoder {")
         .replace("constructor(private readonly b: Uint8Array) {} take(n: number): Uint8Array", "constructor(private readonly b: Uint8Array, p = 0) { this.p = p; } position(): number { return this.p; } take(n: number): Uint8Array")
         .replace("done(): void { if (this.p !== this.b.length)", "seek(position: number): void { if (position < 0 || position > this.b.length) throw new Error('invalid decoder position'); this.p = position; } done(): void { if (this.p !== this.b.length)");
-    output.push_str("export class LazyCollection<T> { constructor(private readonly wire: Uint8Array, private readonly start: number, readonly length: number, private readonly decode: (decoder: WireDecoder) => T) {} at(index: number): T { if (!Number.isInteger(index) || index < 0 || index >= this.length) throw new RangeError('collection index out of range'); const decoder = new WireDecoder(this.wire, this.start); let value!: T; for (let i = 0; i <= index; i++) value = this.decode(decoder); return value; } *[Symbol.iterator](): IterableIterator<T> { const decoder = new WireDecoder(this.wire, this.start); for (let i = 0; i < this.length; i++) yield this.decode(decoder); } }\n\n");
+    output.push_str("export class LazyCollection<T> { constructor(private readonly wire: Uint8Array, private readonly start: number, readonly length: number, private readonly decode: (decoder: WireDecoder) => T) {} at(index: number): T { if (!Number.isInteger(index) || index < 0 || index >= this.length) throw new RangeError('collection index out of range'); const decoder = new WireDecoder(this.wire, this.start); let value!: T; for (let i = 0; i <= index; i++) value = this.decode(decoder); return value; } *[Symbol.iterator](): IterableIterator<T> { const decoder = new WireDecoder(this.wire, this.start); for (let i = 0; i < this.length; i++) yield this.decode(decoder); } }\nexport class BorrowedPacket<T> { constructor(readonly wire: Uint8Array, readonly view: T) {} }\n\n");
     output.push_str("const wireBytesCompare = (a: Uint8Array, b: Uint8Array): number => { for (let i = 0; i < Math.min(a.length, b.length); i++) { if (a[i] < b[i]) return -1; if (a[i] > b[i]) return 1; } return a.length - b.length; };\n\n");
     output = output.replace(
         "validateBinary(layer: number, typeName: string, input: Uint8Array): void;",
@@ -1210,7 +1210,7 @@ fn generate_typescript_view_struct(item: &crate::Struct, schema: &Schema, output
         }
     }
     output.push_str(" return value; }\n");
-    output.push_str(&format!("export function decode{name}View(wire: Uint8Array): {name}View {{ const d = new WireDecoder(wire); const value = read_{lower}_view(d); d.done(); return value; }}\n\n"));
+    output.push_str(&format!("export function decode{name}View(wire: Uint8Array): {name}View {{ const d = new WireDecoder(wire); const value = read_{lower}_view(d); d.done(); return value; }}\nexport function borrow{name}View(wire: Uint8Array): BorrowedPacket<{name}View> {{ return new BorrowedPacket(wire, decode{name}View(wire)); }}\n\n"));
     generate_typescript_lazy_view_struct(item, schema, output);
 }
 
@@ -1433,7 +1433,7 @@ fn generate_typescript_lazy_view_struct(
             typescript_decode_lazy_field_type(&field.ty, &lhs, schema, output);
         }
     }
-    output.push_str(&format!(" return value; }}\nexport function decode{name}LazyView(wire: Uint8Array): {name}LazyView {{ const d = new WireDecoder(wire); const value = read_{lower}_lazy_view(d, wire); d.done(); return value; }}\n\n"));
+    output.push_str(&format!(" return value; }}\nexport function decode{name}LazyView(wire: Uint8Array): {name}LazyView {{ const d = new WireDecoder(wire); const value = read_{lower}_lazy_view(d, wire); d.done(); return value; }}\nexport function borrow{name}LazyView(wire: Uint8Array): BorrowedPacket<{name}LazyView> {{ return new BorrowedPacket(wire, decode{name}LazyView(wire)); }}\n\n"));
 }
 
 fn generate_typescript_view_enum(item: &crate::Enum, schema: &Schema, output: &mut String) {
@@ -1471,7 +1471,7 @@ fn generate_typescript_view_enum(item: &crate::Enum, schema: &Schema, output: &m
         output.push_str(" } };");
     }
     output.push_str(" throw new Error('unknown constructor'); }\n");
-    output.push_str(&format!("export function decode{name}View(wire: Uint8Array): {name}View {{ const d = new WireDecoder(wire); const value = read_{lower}_view(d); d.done(); return value; }}\n\n"));
+    output.push_str(&format!("export function decode{name}View(wire: Uint8Array): {name}View {{ const d = new WireDecoder(wire); const value = read_{lower}_view(d); d.done(); return value; }}\nexport function borrow{name}View(wire: Uint8Array): BorrowedPacket<{name}View> {{ return new BorrowedPacket(wire, decode{name}View(wire)); }}\n\n"));
     generate_typescript_lazy_view_enum(item, schema, output);
 }
 
@@ -1578,7 +1578,7 @@ fn generate_typescript_lazy_view_enum(item: &crate::Enum, schema: &Schema, outpu
         }
         output.push_str(" } };");
     }
-    output.push_str(&format!(" throw new Error('unknown constructor'); }}\nexport function decode{name}LazyView(wire: Uint8Array): {name}LazyView {{ const d = new WireDecoder(wire); const value = read_{lower}_lazy_view(d, wire); d.done(); return value; }}\n\n"));
+    output.push_str(&format!(" throw new Error('unknown constructor'); }}\nexport function decode{name}LazyView(wire: Uint8Array): {name}LazyView {{ const d = new WireDecoder(wire); const value = read_{lower}_lazy_view(d, wire); d.done(); return value; }}\nexport function borrow{name}LazyView(wire: Uint8Array): BorrowedPacket<{name}LazyView> {{ return new BorrowedPacket(wire, decode{name}LazyView(wire)); }}\n\n"));
 }
 
 fn typescript_decode_view_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut String) {
@@ -2079,6 +2079,9 @@ mod tests {
         assert!(typescript.contains("decodeUserLazyView"));
         assert!(typescript.contains("LazyCollection"));
         assert!(typescript.contains("borrowBinary"));
+        assert!(typescript.contains("export class BorrowedPacket<T>"));
+        assert!(typescript.contains("borrowUserView"));
+        assert!(typescript.contains("borrowUserLazyView"));
         assert!(typescript.contains("export type EventView"));
         assert!(typescript.contains("LazyCollection<Uint8Array>"));
         assert!(typescript.contains("itemsvaluesCount"));

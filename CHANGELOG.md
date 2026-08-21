@@ -37,6 +37,9 @@ All notable changes to Typikon since its initial public beta are documented here
 - Added matching packet-backed TypeScript `LazyCollection` views for direct enum collection payloads.
 - Added strict sorted/unique key validation while scanning Go lazy enum maps.
 - Made Go and TypeScript lazy iterators decode collections sequentially in O(n) instead of rescanning from the beginning for every element.
+- Added owner-preserving TypeScript `BorrowedPacket` views and a native `borrowTyped` facade helper.
+- Expanded cross-language regressions for typed packet ownership, aliasing, duplicate map keys, and malformed collection input.
+- Clarified the Python zero-copy boundary: packet ownership is exposed safely, while typed Python objects remain materialized.
 
 ### Changed
 

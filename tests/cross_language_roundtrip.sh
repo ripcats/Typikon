@@ -41,6 +41,8 @@ const m = require(process.argv[2]);
 const wire = m.encodeUser({id: 7, username: "ada", display_name: "Ada", flags: 0, presence: "Online", roles: ["admin"]});
 const view = m.decodeUserView(wire);
 if (!(view.username instanceof Uint8Array) || new TextDecoder().decode(view.username) !== "ada") process.exit(1);
+const ownedView = m.borrowUserView(wire);
+if (ownedView.wire !== wire || new TextDecoder().decode(ownedView.view.username) !== "ada") process.exit(1);
 const pos = wire.indexOf(97);
 wire[pos] = 122;
 if (new TextDecoder().decode(view.username) !== "zda") process.exit(1);
@@ -61,6 +63,12 @@ if (mapKey < 0) process.exit(1);
 unsorted[mapKey] = 122;
 try { m.decodeMessageView(unsorted); process.exit(1); } catch (_) {}
 try { m.decodeMessageLazyView(unsorted); process.exit(1); } catch (_) {}
+const duplicate = mapWire.slice();
+const secondKey = duplicate.lastIndexOf(98);
+if (secondKey < 0) process.exit(1);
+duplicate[secondKey] = 97;
+try { m.decodeMessageView(duplicate); process.exit(1); } catch (_) {}
+try { m.decodeMessageLazyView(duplicate); process.exit(1); } catch (_) {}
 JS
 node_wire="$(node - "$temp_dir/typikon_typescript_native.node" <<'JS'
 const n = require(process.argv[2]);

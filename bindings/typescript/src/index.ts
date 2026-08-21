@@ -7,6 +7,24 @@ export interface TypikonNative {
   borrowBinary(layer: number, typeName: string, input: Uint8Array): Uint8Array;
 }
 
+export class NativeBorrowedPacket<T> {
+  constructor(
+    readonly wire: Uint8Array,
+    readonly view: T,
+  ) {}
+}
+
+export function borrowTyped<T>(
+  native: TypikonNative,
+  layer: number,
+  typeName: string,
+  input: Uint8Array,
+  decode: (wire: Uint8Array) => T,
+): NativeBorrowedPacket<T> {
+  const wire = native.borrowBinary(layer, typeName, input);
+  return new NativeBorrowedPacket(wire, decode(wire));
+}
+
 export function loadNative(modulePath: string): TypikonNative {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   return require(modulePath) as TypikonNative;

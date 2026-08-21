@@ -72,17 +72,14 @@ impl<'a> BorrowedWireCodec<'a> for AttachmentView<'a> {
 
 fn data() -> Data {
     Data {
-        roles: ["admin", "moderator", "support"]
+        roles: ["admin", "moderator"]
             .into_iter()
             .map(str::to_owned)
             .collect(),
-        attachments: (0..8)
-            .map(|i| (format!("photo-{i}"), "image/jpeg".into(), 4096 + i))
-            .collect(),
+        attachments: vec![("photo".into(), "image/jpeg".into(), 4096)],
         metadata: BTreeMap::from([
             ("client".into(), "web".into()),
             ("locale".into(), "en".into()),
-            ("trace".into(), "benchmark".into()),
         ]),
         payload: Vec::new(),
     }

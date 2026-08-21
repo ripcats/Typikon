@@ -44,6 +44,7 @@ All notable changes to Typikon since its initial public beta are documented here
 - Added installable Python package metadata and a safe generic `BorrowedPacket` facade.
 - Documented Layer migration audits, 64-bit C-ID scope, and explicit Map key validation errors.
 - Added schema-level regression tests proving invalid Map keys return validation errors without panics.
+- Added a repeatable Rust/Go/Python/TypeScript language benchmark harness for the same messenger payload profile.
 
 ### Changed
 

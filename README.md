@@ -281,6 +281,8 @@ Rust suite включает **64 теста: 59 unit и 5 integration** — pars
 
 Дополнительно проверяются Python/Go/TypeScript bindings, owner/aliasing, lazy iteration, duplicate/unsorted maps, cross-language round-trip и semantic parity с FlatBuffers (`cargo test --test flatbuffers_comparison`, `(cd bindings/typescript && npm test)`, `go test ./bindings/go`, `./tests/cross_language_roundtrip.sh`, `./tests/generated_go_views.sh`). Benchmarks: `cargo bench --bench wire` и `cargo bench --bench compare`; они измеряют wire size, encode/decode, borrowed views и allocations, но не являются сетевым benchmark. Длительная проверка запускается отдельно: `TYPIKON_STRESS_SECONDS=172800 ./tests/long_validation.sh`.
 
+Для сравнения runtime-языков на одном messenger payload используется `TYPIKON_BENCH_ITERATIONS=10000 ./tests/language_benchmark.sh`; Rust baseline берётся из `cargo bench --bench compare`, Go дополнительно показывает `allocs/op`, а Python/TypeScript — wall-clock `ns/op`.
+
 ## Структура
 
 ~~~text

@@ -40,6 +40,7 @@ All notable changes to Typikon since its initial public beta are documented here
 - Added owner-preserving TypeScript `BorrowedPacket` views and a native `borrowTyped` facade helper.
 - Expanded cross-language regressions for typed packet ownership, aliasing, duplicate map keys, and malformed collection input.
 - Clarified the Python zero-copy boundary: packet ownership is exposed safely, while typed Python objects remain materialized.
+- Added integration tests comparing Typikon and FlatBuffers round-trips, borrowed/view checks, sizes, and truncated-input rejection.
 
 ### Changed
 

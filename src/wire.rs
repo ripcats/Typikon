@@ -48,7 +48,11 @@ impl Encoder {
     pub fn finish(self) -> Result<Vec<u8>, WireError> {
         Ok(self.bytes)
     }
+    #[inline]
     pub fn varint(&mut self, mut value: u64) -> Result<(), WireError> {
+        if value < 0x80 {
+            return self.push(value as u8);
+        }
         loop {
             let byte = if value >= 0x80 {
                 let b = (value as u8) | 0x80;
@@ -65,15 +69,19 @@ impl Encoder {
             }
         }
     }
+    #[inline]
     pub fn u8(&mut self, value: u8) -> Result<(), WireError> {
         self.push(value)
     }
+    #[inline]
     pub fn u16(&mut self, value: u16) -> Result<(), WireError> {
         self.extend(&value.to_le_bytes())
     }
+    #[inline]
     pub fn u32(&mut self, value: u32) -> Result<(), WireError> {
         self.extend(&value.to_le_bytes())
     }
+    #[inline]
     pub fn u64(&mut self, value: u64) -> Result<(), WireError> {
         self.extend(&value.to_le_bytes())
     }
@@ -104,6 +112,7 @@ impl Encoder {
     pub fn f64(&mut self, value: f64) -> Result<(), WireError> {
         self.u64(value.to_bits())
     }
+    #[inline]
     pub fn bytes(&mut self, value: &[u8]) -> Result<(), WireError> {
         let len = u64::try_from(value.len()).map_err(|_| WireError::IntegerOverflow)?;
         self.varint(len)?;
@@ -152,9 +161,15 @@ impl<'a> Decoder<'a> {
     pub fn is_finished(&self) -> bool {
         self.position == self.bytes.len()
     }
+    #[inline]
     pub fn varint(&mut self) -> Result<u64, WireError> {
+        let first = self.read_u8()?;
+        if first < 0x80 {
+            return Ok(u64::from(first));
+        }
         let mut result = 0u64;
-        for index in 0..MAX_VARINT_BYTES {
+        result = u64::from(first & 0x7f);
+        for index in 1..MAX_VARINT_BYTES {
             let byte = self.read_u8()?;
             let shift = index * 7;
             if index == 9 && (byte & 0x7e) != 0 {

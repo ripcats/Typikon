@@ -261,7 +261,12 @@ fn flat_owned(bytes: &[u8]) -> Data {
     }
 }
 fn flat_view(bytes: &[u8]) -> usize {
-    let r = fb::root_as_collection_message(bytes).unwrap();
+    flat_sum(fb::root_as_collection_message(bytes).unwrap())
+}
+fn flat_view_unchecked(bytes: &[u8]) -> usize {
+    flat_sum(unsafe { fb::root_as_collection_message_unchecked(bytes) })
+}
+fn flat_sum(r: fb::CollectionMessage<'_>) -> usize {
     let mut total = r.id() as usize;
     for x in r.roles().unwrap().iter() {
         total += x.len();
@@ -298,6 +303,9 @@ fn main() {
     let fv = timed(|| {
         black_box(flat_view(&fw));
     });
+    let fvu = timed(|| {
+        black_box(flat_view_unchecked(&fw));
+    });
     let toa = allocs(|| {
         black_box(typikon_owned(&tw));
     });
@@ -315,7 +323,7 @@ fn main() {
         tw.len()
     );
     println!(
-        "format=flatbuffers bytes={} encode_ns={fe:.2} owned_decode_ns={fo:.2} borrowed_decode_and_iterate_ns={fv:.2} allocations_owned={foa} allocations_borrowed={fva}",
+        "format=flatbuffers bytes={} encode_ns={fe:.2} owned_decode_ns={fo:.2} verified_view_ns={fv:.2} unchecked_view_ns={fvu:.2} allocations_owned={foa} allocations_borrowed={fva}",
         fw.len()
     );
 
@@ -340,6 +348,9 @@ fn main() {
     let hfv = timed_n(HEAVY_N, || {
         black_box(flat_view(&hfw));
     });
+    let hfvu = timed_n(HEAVY_N, || {
+        black_box(flat_view_unchecked(&hfw));
+    });
     let htoa = allocs(|| {
         black_box(typikon_owned(&htw));
     });
@@ -357,7 +368,7 @@ fn main() {
         htw.len()
     );
     println!(
-        "case=heavy format=flatbuffers entries=64_roles+256_attachments+64_metadata bytes={} encode_ns={hfe:.2} owned_decode_ns={hfo:.2} borrowed_decode_and_iterate_ns={hfv:.2} allocations_owned={hfoa} allocations_borrowed={hfva}",
+        "case=heavy format=flatbuffers entries=64_roles+256_attachments+64_metadata bytes={} encode_ns={hfe:.2} owned_decode_ns={hfo:.2} verified_view_ns={hfv:.2} unchecked_view_ns={hfvu:.2} allocations_owned={hfoa} allocations_borrowed={hfva}",
         hfw.len()
     );
 }

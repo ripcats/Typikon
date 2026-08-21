@@ -38,6 +38,13 @@ impl Encoder {
             max_size,
         }
     }
+    pub fn with_buffer(max_size: usize, mut bytes: Vec<u8>) -> Result<Self, WireError> {
+        if bytes.len() > max_size {
+            return Err(WireError::PacketTooLarge);
+        }
+        bytes.clear();
+        Ok(Self { bytes, max_size })
+    }
     pub fn finish(self) -> Result<Vec<u8>, WireError> {
         Ok(self.bytes)
     }
@@ -459,6 +466,19 @@ mod tests {
         assert_eq!(text, "text");
         assert!(bytes[payload.as_ptr() as usize - bytes.as_ptr() as usize..].starts_with(payload));
         assert!(decoder.is_finished());
+    }
+
+    #[test]
+    fn encoder_can_reuse_a_finished_buffer() {
+        let mut encoder = Encoder::with_capacity(LIMIT, 32);
+        encoder.bytes(b"first").unwrap();
+        let buffer = encoder.finish().unwrap();
+        let capacity = buffer.capacity();
+        let mut encoder = Encoder::with_buffer(LIMIT, buffer).unwrap();
+        encoder.bytes(b"second").unwrap();
+        let buffer = encoder.finish().unwrap();
+        assert_eq!(buffer, [6, b's', b'e', b'c', b'o', b'n', b'd']);
+        assert_eq!(buffer.capacity(), capacity);
     }
 
     #[test]

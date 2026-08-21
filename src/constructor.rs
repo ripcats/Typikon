@@ -32,6 +32,15 @@ impl ConstructorEncoder {
         inner.raw(&cid)?;
         Ok(Self { inner })
     }
+    pub fn new_with_buffer(
+        cid: [u8; CID_BYTES],
+        max_size: usize,
+        buffer: Vec<u8>,
+    ) -> Result<Self, WireError> {
+        let mut inner = Encoder::with_buffer(max_size, buffer)?;
+        inner.raw(&cid)?;
+        Ok(Self { inner })
+    }
     pub fn field<T: WireCodec>(&mut self, value: &T) -> Result<(), WireError> {
         self.inner.value(value)
     }

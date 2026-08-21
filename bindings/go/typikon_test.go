@@ -23,13 +23,19 @@ func TestNegotiateLayer(t *testing.T) {
 }
 
 func TestUserRoundTrip(t *testing.T) {
-
-	want := User{Id: 7, Name: "Ada", Flags: 0}
+	want := User{
+		Id:          7,
+		Username:    "ada",
+		DisplayName: "Ada",
+		Flags:       0,
+		Presence:    Presence("Online"),
+		Roles:       []string{},
+	}
 	wire, err := EncodeUser(want)
 	if err != nil {
 		t.Fatalf("EncodeUser: %v", err)
 	}
-	wantWire, _ := hex.DecodeString("f4bd4aecfce83daf0700000000000000034164610000")
+	wantWire, _ := hex.DecodeString("acb38da67a712058070000000000000003616461034164610000000000000000000000")
 	if !bytes.Equal(wire, wantWire) {
 		t.Fatalf("wire = %x, want %x", wire, wantWire)
 	}
@@ -37,7 +43,8 @@ func TestUserRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeUser: %v", err)
 	}
-	if got.Id != want.Id || got.Name != want.Name || got.Flags != want.Flags || got.VerifiedAt != nil {
+	if got.Id != want.Id || got.Username != want.Username || got.DisplayName != want.DisplayName ||
+		got.Flags != want.Flags || got.AvatarUrl != nil || got.Presence != want.Presence || len(got.Roles) != 0 {
 		t.Fatalf("round-trip = %#v, want %#v", got, want)
 	}
 }

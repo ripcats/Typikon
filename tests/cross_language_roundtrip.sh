@@ -26,4 +26,5 @@ JS
 )"
 test "$node_wire" = "$expected"
 
-printf 'Python / TypeScript cross-language round-trip: PASS\n'
+(cd "$repo_dir/bindings/go" && go test ./...)
+printf 'Python / TypeScript / Go cross-language round-trip: PASS\n'

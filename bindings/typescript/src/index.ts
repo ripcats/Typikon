@@ -1,8 +1,6 @@
 export interface TypikonNative {
   abiVersion(): number;
   negotiateLayer(requested: number, supported: number[]): number;
-  encodeJson(layer: number, typeName: string, input: Uint8Array): Uint8Array;
-  decodeJson(layer: number, typeName: string, input: Uint8Array): Uint8Array;
   encodeBinary(layer: number, typeName: string, input: Uint8Array): Uint8Array;
   decodeBinary(layer: number, typeName: string, input: Uint8Array): Uint8Array;
   validateBinary(layer: number, typeName: string, input: Uint8Array): void;
@@ -20,10 +18,6 @@ export function createTypikon(native: TypikonNative) {
     abiVersion: () => native.abiVersion(),
     negotiateLayer: (requested: number, supported: number[]) =>
       native.negotiateLayer(requested, supported),
-    encodeJson: (layer: number, typeName: string, input: Uint8Array) =>
-      native.encodeJson(layer, typeName, input),
-    decodeJson: (layer: number, typeName: string, input: Uint8Array) =>
-      native.decodeJson(layer, typeName, input),
     encodeBinary: (layer: number, typeName: string, input: Uint8Array) =>
       native.encodeBinary(layer, typeName, input),
     decodeBinary: (layer: number, typeName: string, input: Uint8Array) =>

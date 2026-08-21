@@ -2,7 +2,7 @@
 set -uo pipefail
 
 duration_seconds="${TYPIKON_STRESS_SECONDS:-172800}"
-log_file="${TYPIKON_STRESS_LOG:-/tmp/typikon-long-validation.log}"
+log_file="${TYPIKON_STRESS_LOG:-/home/evgeny/tmp/typikon-long-validation.log}"
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 deadline=$(( $(date +%s) + duration_seconds ))
 

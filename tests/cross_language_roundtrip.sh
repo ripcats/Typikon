@@ -18,8 +18,8 @@ cp "$repo_dir/bindings/typescript/native/target/debug/libtypikon_typescript_nati
 node_wire="$(TYPIKON_VALUE="$json" node - "$temp_dir/typikon_typescript_native.node" <<'JS'
 const n = require(process.argv[2]);
 const json = Buffer.from(process.env.TYPIKON_VALUE);
-const wire = n.encodeJson(10, "user", json);
-const decoded = JSON.parse(n.decodeJson(10, "user", wire).toString());
+const wire = n.encodeBinary(10, "user", json);
+const decoded = JSON.parse(n.decodeBinary(10, "user", wire).toString());
 if (decoded.id !== 7 || decoded.username !== "ada" || decoded.display_name !== "Ada") process.exit(1);
 process.stdout.write(wire.toString("hex"));
 JS

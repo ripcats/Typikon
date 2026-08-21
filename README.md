@@ -294,7 +294,7 @@ Typikon — собственная schema-driven реализация бинар
 
 В репозитории также есть проверки сборки Python binding и native crates Go/TypeScript. TypeScript facade проверяется через `npm test`, а Go facade — через `go test ./bindings/go`; golden wire round-trip совпадает для Python, TypeScript и Go.
 
-Для длительной проверки можно запустить `TYPIKON_STRESS_SECONDS=172800 ./tests/long_validation.sh`. Скрипт повторяет release-тесты, native TypeScript tests, TypeScript typecheck и cross-language round-trip, сохраняя лог в `/tmp/typikon-long-validation.log`.
+Для длительной проверки можно запустить `TYPIKON_STRESS_SECONDS=172800 ./tests/long_validation.sh`. Скрипт повторяет release-тесты, native TypeScript tests, TypeScript typecheck и cross-language round-trip, сохраняя лог в `/home/evgeny/tmp/typikon-long-validation.log`.
 
 ## Структура
 

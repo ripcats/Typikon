@@ -290,7 +290,7 @@ Typikon — собственная schema-driven реализация бинар
 
 Текущая Rust-проверка включает **52 теста: 49 unit и 3 integration**. Покрыты parser и semantic validation, code generation, воспроизводимость public schema, CLI, Layer negotiation, C-ID, round-trip primitive/collection wire-кодирования, лимиты, malformed/truncated input, duplicate Map keys, canonical VarInt, borrowed decode, lazy borrowed collections, vectored write и случайные parser/wire inputs.
 
-Воспроизводимые benchmarks запускаются командами `cargo bench --bench wire` и `cargo bench --bench compare`. Первый показывает внутренние пути Typikon, второй сравнивает одинаковую collection-heavy схему с FlatBuffers: размер wire, encode, owned decode, borrowed decode с полной итерацией и число аллокаций. Результат зависит от CPU и профиля сборки и не считается сетевым benchmark.
+Воспроизводимые benchmarks запускаются командами `cargo bench --bench wire` и `cargo bench --bench compare`. Первый показывает внутренние пути Typikon, второй сравнивает baseline и тяжёлую collection-heavy схему с FlatBuffers: размер wire, encode, owned decode, borrowed decode с полной итерацией и число аллокаций. Результат зависит от CPU и профиля сборки и не считается сетевым benchmark.
 
 В репозитории также есть проверки сборки Python binding и native crates Go/TypeScript. TypeScript facade проверяется через `npm test`, а Go facade — через `go test ./bindings/go`; golden wire round-trip совпадает для Python, TypeScript и Go.
 

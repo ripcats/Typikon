@@ -20,6 +20,7 @@ mod flatbuffers_generated {
 use flatbuffers_generated::typikon_bench as fb;
 
 const N: usize = 100_000;
+const HEAVY_N: usize = 1_000;
 const C: [u8; 8] = [0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80];
 const A: [u8; 8] = [0x80, 0x70, 0x60, 0x50, 0x40, 0x30, 0x20, 0x10];
 
@@ -74,12 +75,41 @@ fn data() -> Data {
         ]),
     }
 }
-fn timed(mut f: impl FnMut()) -> f64 {
-    let start = Instant::now();
-    for _ in 0..N {
-        f();
+fn heavy_data() -> Data {
+    Data {
+        roles: (0..64)
+            .map(|i| format!("role-{i:03}-messenger-member"))
+            .collect(),
+        attachments: (0..256)
+            .map(|i| {
+                (
+                    format!("attachment-{i:04}-large-photo-name"),
+                    "image/jpeg; charset=binary".into(),
+                    1_048_576 + i,
+                )
+            })
+            .collect(),
+        metadata: (0..64)
+            .map(|i| {
+                (
+                    format!("metadata-key-{i:03}"),
+                    format!("metadata-value-{i:03}-production"),
+                )
+            })
+            .collect(),
     }
-    start.elapsed().as_nanos() as f64 / N as f64
+}
+fn timed(mut f: impl FnMut()) -> f64 {
+    timed_n(N, f)
+}
+fn timed_n(iterations: usize, mut f: impl FnMut()) -> f64 {
+    let mut remaining = iterations;
+    let start = Instant::now();
+    while remaining > 0 {
+        f();
+        remaining -= 1;
+    }
+    start.elapsed().as_nanos() as f64 / iterations as f64
 }
 fn allocs(f: impl FnOnce()) -> usize {
     ALLOCS.store(0, Ordering::Relaxed);
@@ -287,5 +317,47 @@ fn main() {
     println!(
         "format=flatbuffers bytes={} encode_ns={fe:.2} owned_decode_ns={fo:.2} borrowed_decode_and_iterate_ns={fv:.2} allocations_owned={foa} allocations_borrowed={fva}",
         fw.len()
+    );
+
+    let heavy = heavy_data();
+    let htw = typikon_encode(&heavy);
+    let hfw = flat_encode(&heavy);
+    let hte = timed_n(HEAVY_N, || {
+        black_box(typikon_encode(&heavy));
+    });
+    let hfe = timed_n(HEAVY_N, || {
+        black_box(flat_encode(&heavy));
+    });
+    let hto = timed_n(HEAVY_N, || {
+        black_box(typikon_owned(&htw));
+    });
+    let hfo = timed_n(HEAVY_N, || {
+        black_box(flat_owned(&hfw));
+    });
+    let htv = timed_n(HEAVY_N, || {
+        black_box(typikon_view(&htw));
+    });
+    let hfv = timed_n(HEAVY_N, || {
+        black_box(flat_view(&hfw));
+    });
+    let htoa = allocs(|| {
+        black_box(typikon_owned(&htw));
+    });
+    let hfoa = allocs(|| {
+        black_box(flat_owned(&hfw));
+    });
+    let htva = allocs(|| {
+        black_box(typikon_view(&htw));
+    });
+    let hfva = allocs(|| {
+        black_box(flat_view(&hfw));
+    });
+    println!(
+        "case=heavy format=typikon entries=64_roles+256_attachments+64_metadata bytes={} encode_ns={hte:.2} owned_decode_ns={hto:.2} borrowed_decode_and_iterate_ns={htv:.2} allocations_owned={htoa} allocations_borrowed={htva}",
+        htw.len()
+    );
+    println!(
+        "case=heavy format=flatbuffers entries=64_roles+256_attachments+64_metadata bytes={} encode_ns={hfe:.2} owned_decode_ns={hfo:.2} borrowed_decode_and_iterate_ns={hfv:.2} allocations_owned={hfoa} allocations_borrowed={hfva}",
+        hfw.len()
     );
 }

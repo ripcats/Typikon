@@ -1,6 +1,7 @@
 //! Small, allocation-aware wire primitives used by generated codecs.
 
 use std::collections::BTreeMap;
+use std::io::{self, IoSlice, Write};
 use std::marker::PhantomData;
 
 const MAX_VARINT_BYTES: usize = 10;
@@ -113,6 +114,12 @@ impl<'a, T: BorrowedWireCodec<'a>> BorrowedVec<'a, T> {
     }
 }
 
+impl<'a, T: BorrowedWireCodec<'a>> BorrowedWireCodec<'a> for BorrowedVec<'a, T> {
+    fn decode_borrowed(decoder: &mut Decoder<'a>) -> Result<Self, WireError> {
+        decoder.borrowed_vec()
+    }
+}
+
 pub struct BorrowedVecIter<'a, T> {
     decoder: Decoder<'a>,
     remaining: usize,
@@ -174,23 +181,33 @@ impl<'a, K, V> BorrowedMap<'a, K, V> {
     }
 }
 
-impl<'a, K: BorrowedWireCodec<'a>, V: BorrowedWireCodec<'a>> BorrowedMap<'a, K, V> {
+impl<'a, K: BorrowedWireCodec<'a> + Ord + Clone, V: BorrowedWireCodec<'a>> BorrowedMap<'a, K, V> {
     pub fn iter(&self) -> BorrowedMapIter<'a, K, V> {
         BorrowedMapIter {
             decoder: Decoder::new(self.bytes, self.max_size).expect("validated view range"),
             remaining: self.count,
+            previous: None,
             marker: PhantomData,
         }
+    }
+}
+
+impl<'a, K: BorrowedWireCodec<'a>, V: BorrowedWireCodec<'a>> BorrowedWireCodec<'a>
+    for BorrowedMap<'a, K, V>
+{
+    fn decode_borrowed(decoder: &mut Decoder<'a>) -> Result<Self, WireError> {
+        decoder.borrowed_map()
     }
 }
 
 pub struct BorrowedMapIter<'a, K, V> {
     decoder: Decoder<'a>,
     remaining: usize,
+    previous: Option<K>,
     marker: PhantomData<(K, V)>,
 }
 
-impl<'a, K: BorrowedWireCodec<'a>, V: BorrowedWireCodec<'a>> Iterator
+impl<'a, K: BorrowedWireCodec<'a> + Ord + Clone, V: BorrowedWireCodec<'a>> Iterator
     for BorrowedMapIter<'a, K, V>
 {
     type Item = Result<(K, V), WireError>;
@@ -202,6 +219,14 @@ impl<'a, K: BorrowedWireCodec<'a>, V: BorrowedWireCodec<'a>> Iterator
         self.remaining -= 1;
         Some((|| {
             let key = K::decode_borrowed(&mut self.decoder)?;
+            if self
+                .previous
+                .as_ref()
+                .is_some_and(|previous| key.cmp(previous) != std::cmp::Ordering::Greater)
+            {
+                return Err(WireError::MalformedConstructor);
+            }
+            self.previous = Some(key.clone());
             let value = V::decode_borrowed(&mut self.decoder)?;
             Ok((key, value))
         })())
@@ -236,6 +261,65 @@ impl Encoder {
     }
     pub fn finish(self) -> Result<Vec<u8>, WireError> {
         Ok(self.bytes)
+    }
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+    pub fn write_vectored<W: Write>(
+        &self,
+        writer: &mut W,
+        prefix: &[u8],
+        suffix: &[u8],
+    ) -> io::Result<usize> {
+        let segments = [prefix, self.bytes.as_slice(), suffix];
+        let mut segment = 0;
+        let mut offset = 0;
+        let mut written = 0;
+        while segment < segments.len() {
+            while segment < segments.len() && offset == segments[segment].len() {
+                segment += 1;
+                offset = 0;
+            }
+            if segment == segments.len() {
+                break;
+            }
+            let mut slices = [IoSlice::new(&[]), IoSlice::new(&[]), IoSlice::new(&[])];
+            let mut count = 0;
+            for (index, value) in segments.iter().enumerate().skip(segment) {
+                let start = if index == segment { offset } else { 0 };
+                if start < value.len() {
+                    slices[count] = IoSlice::new(&value[start..]);
+                    count += 1;
+                }
+            }
+            let progress = writer.write_vectored(&slices[..count])?;
+            if progress == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "vectored write made no progress",
+                ));
+            }
+            written += progress;
+            let mut remaining = progress;
+            while remaining > 0 {
+                let available = segments[segment].len() - offset;
+                if remaining < available {
+                    offset += remaining;
+                    remaining = 0;
+                } else {
+                    remaining -= available;
+                    segment += 1;
+                    offset = 0;
+                    while segment < segments.len() && segments[segment].is_empty() {
+                        segment += 1;
+                    }
+                }
+            }
+        }
+        Ok(written)
     }
     #[inline]
     pub fn varint(&mut self, value: u64) -> Result<(), WireError> {
@@ -841,6 +925,21 @@ mod tests {
         let buffer = encoder.finish().unwrap();
         assert_eq!(buffer, [6, b's', b'e', b'c', b'o', b'n', b'd']);
         assert_eq!(buffer.capacity(), capacity);
+    }
+
+    #[test]
+    fn vectored_write_keeps_framing_segments_separate() {
+        let mut encoder = Encoder::new(LIMIT);
+        encoder.bytes(b"payload").unwrap();
+        let mut output = Vec::new();
+        let written = encoder
+            .write_vectored(&mut output, b"header", b"trailer")
+            .unwrap();
+        assert_eq!(written, 6 + encoder.len() + 7);
+        assert_eq!(
+            output,
+            [b"header".as_slice(), encoder.as_bytes(), b"trailer"].concat()
+        );
     }
 
     #[test]

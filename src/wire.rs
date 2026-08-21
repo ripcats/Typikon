@@ -244,12 +244,22 @@ impl<'a> Decoder<'a> {
         self.bytes.get(..len).ok_or(WireError::UnexpectedEof)
     }
     pub fn expect_cid(&mut self, expected: &str) -> Result<(), WireError> {
+        let expected = crate::constructor::cid_bytes(expected)?;
+        self.expect_cid_bytes(&expected)
+    }
+    pub fn expect_cid_bytes(
+        &mut self,
+        expected: &[u8; crate::constructor::CID_BYTES],
+    ) -> Result<(), WireError> {
         let actual = self.read_raw(crate::constructor::CID_BYTES)?;
-        if actual == crate::constructor::cid_bytes(expected)? {
+        if actual == expected {
             Ok(())
         } else {
             Err(WireError::UnknownCId)
         }
+    }
+    pub fn read_cid_bytes(&mut self) -> Result<[u8; crate::constructor::CID_BYTES], WireError> {
+        self.read_array()
     }
     pub fn read_cid(&mut self) -> Result<String, WireError> {
         Ok(self

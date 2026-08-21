@@ -23,7 +23,10 @@ pub use bridge::{
 };
 pub use codec::{DEFAULT_MAX_PACKET_SIZE, TypikonCodec, decode_value, encode_value};
 pub use codegen::{generate_public_schema, generate_rust};
-pub use constructor::{ConstructorDecoder, ConstructorEncoder, cid_bytes, constructor_cid};
+pub use constructor::CID_BYTES;
+pub use constructor::{
+    ConstructorDecoder, ConstructorEncoder, cid_bytes, constructor_cid, constructor_cid_bytes,
+};
 pub use error::ParseError;
 pub use fingerprint::{canonical_form, constructor_cid as struct_constructor_cid, variant_cid};
 pub use layer::{LayerSupport, LayerVersionNotSupported};

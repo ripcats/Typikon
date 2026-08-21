@@ -2,9 +2,16 @@ use crate::wire::{Decoder, Encoder, WireCodec, WireError};
 
 pub const CID_BYTES: usize = 8;
 
-pub fn constructor_cid(bytes: &[u8], max_size: usize) -> Result<String, WireError> {
+pub fn constructor_cid_bytes(bytes: &[u8], max_size: usize) -> Result<[u8; CID_BYTES], WireError> {
     let decoder = Decoder::new(bytes, max_size)?;
-    let raw = decoder.peek_raw(CID_BYTES)?;
+    decoder
+        .peek_raw(CID_BYTES)?
+        .try_into()
+        .map_err(|_| WireError::UnexpectedEof)
+}
+
+pub fn constructor_cid(bytes: &[u8], max_size: usize) -> Result<String, WireError> {
+    let raw = constructor_cid_bytes(bytes, max_size)?;
     Ok(raw.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
@@ -18,8 +25,11 @@ pub struct ConstructorEncoder {
 
 impl ConstructorEncoder {
     pub fn new(cid: &str, max_size: usize) -> Result<Self, WireError> {
+        Self::new_with_cid(parse_cid(cid)?, max_size)
+    }
+    pub fn new_with_cid(cid: [u8; CID_BYTES], max_size: usize) -> Result<Self, WireError> {
         let mut inner = Encoder::new(max_size);
-        inner.raw(&parse_cid(cid)?)?;
+        inner.raw(&cid)?;
         Ok(Self { inner })
     }
     pub fn field<T: WireCodec>(&mut self, value: &T) -> Result<(), WireError> {
@@ -42,9 +52,16 @@ pub struct ConstructorDecoder<'a> {
 
 impl<'a> ConstructorDecoder<'a> {
     pub fn new(bytes: &'a [u8], expected_cid: &str, max_size: usize) -> Result<Self, WireError> {
+        Self::new_with_cid(bytes, parse_cid(expected_cid)?, max_size)
+    }
+    pub fn new_with_cid(
+        bytes: &'a [u8],
+        expected_cid: [u8; CID_BYTES],
+        max_size: usize,
+    ) -> Result<Self, WireError> {
         let mut inner = Decoder::new(bytes, max_size)?;
         let actual = inner.read_raw(CID_BYTES)?;
-        if actual != parse_cid(expected_cid)? {
+        if actual != expected_cid {
             return Err(WireError::UnknownCId);
         }
         Ok(Self { inner })

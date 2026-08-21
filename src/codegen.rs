@@ -102,9 +102,11 @@ fn schema_type(ty: &Type) -> String {
 fn generate_struct(item: &Struct, output: &mut String) {
     let cid = item.cid.clone().unwrap_or_else(|| constructor_cid(item));
     output.push_str(&format!(
-        "pub const {}_CID: &str = \"{}\";\n",
+        "pub const {}_CID: &str = \"{}\";\npub const {}_CID_BYTES: [u8; typikon::CID_BYTES] = {};\n",
         item.name.to_uppercase(),
-        cid
+        cid,
+        item.name.to_uppercase(),
+        cid_literal(&cid)
     ));
     output.push_str("#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\n");
     output.push_str(&format!("pub struct {} {{\n", item.name));
@@ -121,7 +123,7 @@ fn generate_struct(item: &Struct, output: &mut String) {
         item.name
     ));
     output.push_str("    fn encode(&self) -> Result<Vec<u8>, typikon::WireError> {\n");
-    output.push_str(&format!("        let mut encoder = typikon::ConstructorEncoder::new({}_CID, typikon::DEFAULT_MAX_PACKET_SIZE)?;\n", item.name.to_uppercase()));
+    output.push_str(&format!("        let mut encoder = typikon::ConstructorEncoder::new_with_cid({}_CID_BYTES, typikon::DEFAULT_MAX_PACKET_SIZE)?;\n", item.name.to_uppercase()));
     for field in &item.fields {
         if let Some(guard) = &field.guard {
             let (owner, bit) = guard.split_once('.').unwrap_or(("flags", guard));
@@ -138,7 +140,7 @@ fn generate_struct(item: &Struct, output: &mut String) {
     }
     output.push_str("        encoder.finish()\n    }\n");
     output.push_str("    fn decode(bytes: &[u8]) -> Result<Self, typikon::WireError> {\n");
-    output.push_str(&format!("        let mut decoder = typikon::ConstructorDecoder::new(bytes, {}_CID, typikon::DEFAULT_MAX_PACKET_SIZE)?;\n", item.name.to_uppercase()));
+    output.push_str(&format!("        let mut decoder = typikon::ConstructorDecoder::new_with_cid(bytes, {}_CID_BYTES, typikon::DEFAULT_MAX_PACKET_SIZE)?;\n", item.name.to_uppercase()));
     for field in &item.fields {
         if let Some(guard) = &field.guard {
             let (owner, bit) = guard.split_once('.').unwrap_or(("flags", guard));
@@ -170,7 +172,7 @@ fn generate_struct(item: &Struct, output: &mut String) {
     output.push_str(&format!("impl typikon::WireCodec for {} {{\n", item.name));
     output.push_str("    fn encode(&self, encoder: &mut typikon::Encoder) -> Result<(), typikon::WireError> {\n");
     output.push_str(&format!(
-        "        encoder.raw(&typikon::cid_bytes({}_CID)?)?;\n",
+        "        encoder.raw(&{}_CID_BYTES)?;\n",
         item.name.to_uppercase()
     ));
     for field in &item.fields {
@@ -189,7 +191,7 @@ fn generate_struct(item: &Struct, output: &mut String) {
     }
     output.push_str("        Ok(())\n    }\n    fn decode(decoder: &mut typikon::Decoder<'_>) -> Result<Self, typikon::WireError> {\n");
     output.push_str(&format!(
-        "        decoder.expect_cid({}_CID)?;\n",
+        "        decoder.expect_cid_bytes(&{}_CID_BYTES)?;\n",
         item.name.to_uppercase()
     ));
     for field in &item.fields {
@@ -255,10 +257,13 @@ fn generate_enum(item: &Enum, output: &mut String) {
             .clone()
             .unwrap_or_else(|| variant_cid(item, variant));
         output.push_str(&format!(
-            "pub const {}_{}_CID: &str = \"{}\";\n",
+            "pub const {}_{}_CID: &str = \"{}\";\npub const {}_{}_CID_BYTES: [u8; typikon::CID_BYTES] = {};\n",
             item.name.to_uppercase(),
             variant.name.to_uppercase(),
-            cid
+            cid,
+            item.name.to_uppercase(),
+            variant.name.to_uppercase(),
+            cid_literal(&cid)
         ));
     }
     output.push_str(&format!(
@@ -275,27 +280,23 @@ fn generate_enum(item: &Enum, output: &mut String) {
             variant.name.to_uppercase()
         );
         if variant.fields.is_empty() {
-            output.push_str(&format!("            Self::{} => {{ let encoder = typikon::ConstructorEncoder::new({cid_name}, typikon::DEFAULT_MAX_PACKET_SIZE)?; encoder.finish() }},\n", variant.name));
+            output.push_str(&format!("            Self::{} => {{ let encoder = typikon::ConstructorEncoder::new_with_cid({cid_name}_BYTES, typikon::DEFAULT_MAX_PACKET_SIZE)?; encoder.finish() }},\n", variant.name));
         } else {
-            output.push_str(&format!("            Self::{} {{ {} }} => {{ let mut encoder = typikon::ConstructorEncoder::new({cid_name}, typikon::DEFAULT_MAX_PACKET_SIZE)?;", variant.name, variant.fields.iter().map(|field| field.name.clone()).collect::<Vec<_>>().join(", ")));
+            output.push_str(&format!("            Self::{} {{ {} }} => {{ let mut encoder = typikon::ConstructorEncoder::new_with_cid({cid_name}_BYTES, typikon::DEFAULT_MAX_PACKET_SIZE)?;", variant.name, variant.fields.iter().map(|field| field.name.clone()).collect::<Vec<_>>().join(", ")));
             for field in &variant.fields {
                 output.push_str(&format!(" encoder.field({})?;", field.name));
             }
             output.push_str(" encoder.finish() },\n");
         }
     }
-    output.push_str("        }\n    }\n    fn decode(bytes: &[u8]) -> Result<Self, typikon::WireError> {\n        match typikon::constructor_cid(bytes, typikon::DEFAULT_MAX_PACKET_SIZE)?.as_str() {\n");
+    output.push_str("        }\n    }\n    fn decode(bytes: &[u8]) -> Result<Self, typikon::WireError> {\n        match typikon::constructor_cid_bytes(bytes, typikon::DEFAULT_MAX_PACKET_SIZE)? {\n");
     for variant in &item.variants {
-        let cid = variant
-            .cid
-            .clone()
-            .unwrap_or_else(|| variant_cid(item, variant));
         let fields = variant
             .fields
             .iter()
             .map(|field| field.name.clone())
             .collect::<Vec<_>>();
-        output.push_str(&format!("            \"{}\" => {{ let mut decoder = typikon::ConstructorDecoder::new(bytes, {}_{}_CID, typikon::DEFAULT_MAX_PACKET_SIZE)?;", cid, item.name.to_uppercase(), variant.name.to_uppercase()));
+        output.push_str(&format!("            {}_{}_CID_BYTES => {{ let mut decoder = typikon::ConstructorDecoder::new_with_cid(bytes, {}_{}_CID_BYTES, typikon::DEFAULT_MAX_PACKET_SIZE)?;", item.name.to_uppercase(), variant.name.to_uppercase(), item.name.to_uppercase(), variant.name.to_uppercase()));
         for field in &variant.fields {
             output.push_str(&format!(
                 " let {}: {} = decoder.field()?;",
@@ -327,12 +328,12 @@ fn generate_enum(item: &Enum, output: &mut String) {
         );
         if variant.fields.is_empty() {
             output.push_str(&format!(
-                "        Self::{} => {{ encoder.raw(&typikon::cid_bytes({cid_name})?)?; }},\n",
+                "        Self::{} => {{ encoder.raw(&{cid_name}_BYTES)?; }},\n",
                 variant.name
             ));
         } else {
             output.push_str(&format!(
-                "        Self::{} {{ {} }} => {{ encoder.raw(&typikon::cid_bytes({cid_name})?)?;",
+                "        Self::{} {{ {} }} => {{ encoder.raw(&{cid_name}_BYTES)?;",
                 variant.name,
                 variant
                     .fields
@@ -347,13 +348,13 @@ fn generate_enum(item: &Enum, output: &mut String) {
             output.push_str(" },\n");
         }
     }
-    output.push_str("        } Ok(()) }\n    fn decode(decoder: &mut typikon::Decoder<'_>) -> Result<Self, typikon::WireError> { match decoder.read_cid()?.as_str() {\n");
+    output.push_str("        } Ok(()) }\n    fn decode(decoder: &mut typikon::Decoder<'_>) -> Result<Self, typikon::WireError> { match decoder.read_cid_bytes()? {\n");
     for variant in &item.variants {
-        let cid = variant
-            .cid
-            .clone()
-            .unwrap_or_else(|| variant_cid(item, variant));
-        output.push_str(&format!("        \"{cid}\" => {{"));
+        output.push_str(&format!(
+            "        {}_{}_CID_BYTES => {{",
+            item.name.to_uppercase(),
+            variant.name.to_uppercase()
+        ));
         for field in &variant.fields {
             output.push_str(&format!(
                 " let {}: {} = typikon::WireCodec::decode(decoder)?;",
@@ -466,6 +467,14 @@ fn const_name(name: &str) -> String {
         result.extend(character.to_uppercase());
     }
     result
+}
+
+fn cid_literal(cid: &str) -> String {
+    let bytes = (0..cid.len())
+        .step_by(2)
+        .map(|index| format!("0x{}", &cid[index..index + 2]))
+        .collect::<Vec<_>>();
+    format!("[{}]", bytes.join(", "))
 }
 
 #[cfg(test)]

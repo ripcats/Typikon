@@ -75,7 +75,7 @@ pub fn generate_go_binding(schema: &Schema, header_name: &str) -> String {
 
 pub fn generate_typescript_binding(schema: &Schema) -> String {
     let mut output = String::from(
-        "export interface TypikonNative { encodeJson(layer: number, typeName: string, input: Uint8Array): Uint8Array; decodeJson(layer: number, typeName: string, input: Uint8Array): Uint8Array; }\n\n",
+        "export interface TypikonNative { encodeJson(layer: number, typeName: string, input: Uint8Array): Uint8Array; decodeJson(layer: number, typeName: string, input: Uint8Array): Uint8Array; encodeBinary(layer: number, typeName: string, input: Uint8Array): Uint8Array; decodeBinary(layer: number, typeName: string, input: Uint8Array): Uint8Array; }\n\n",
     );
     for item in &schema.items {
         let name = item_name(item);
@@ -95,7 +95,7 @@ pub fn generate_typescript_binding(schema: &Schema) -> String {
             output.push_str(&format!("{}\n\n", typescript_item_type(item, schema)));
         }
         let function_name = name.to_ascii_lowercase();
-        output.push_str(&format!("export function encode{name}(native: TypikonNative, value: {name}): Uint8Array {{ return native.encodeJson({}, \"{}\", new TextEncoder().encode(JSON.stringify(value))); }}\nexport function decode{name}(native: TypikonNative, wire: Uint8Array): {name} {{ return JSON.parse(new TextDecoder().decode(native.decodeJson({}, \"{}\", wire))) as {name}; }}\n\n", schema.version, function_name, schema.version, function_name));
+        output.push_str(&format!("export function encode{name}(native: TypikonNative, value: {name}): Uint8Array {{ return native.encodeJson({}, \"{}\", new TextEncoder().encode(JSON.stringify(value))); }}\nexport function decode{name}(native: TypikonNative, wire: Uint8Array): {name} {{ return JSON.parse(new TextDecoder().decode(native.decodeJson({}, \"{}\", wire))) as {name}; }}\nexport function encodeBinary{name}(native: TypikonNative, value: {name}): Uint8Array {{ return native.encodeBinary({}, \"{}\", new TextEncoder().encode(JSON.stringify(value))); }}\nexport function decodeBinary{name}(native: TypikonNative, wire: Uint8Array): {name} {{ return JSON.parse(new TextDecoder().decode(native.decodeBinary({}, \"{}\", wire))) as {name}; }}\n\n", schema.version, function_name, schema.version, function_name, schema.version, function_name, schema.version, function_name));
     }
     output
 }
@@ -322,12 +322,24 @@ pub fn generate_bridge(schema: &Schema, native_file: &str, kind: BridgeKind) -> 
                 output.push_str(&format!(
                 "pub fn decode_json_{function_name}(input: &[u8]) -> Result<Vec<u8>, String> {{ let mut decoder = typikon::Decoder::new(input, typikon::DEFAULT_MAX_PACKET_SIZE).map_err(|error| format!(\"{{error:?}}\"))?; let value: {native_name} = typikon::WireCodec::decode(&mut decoder).map_err(|error| format!(\"{{error:?}}\"))?; if !decoder.is_finished() {{ return Err(\"trailing bytes\".into()); }} serde_json::to_vec(&value).map_err(|error| error.to_string()) }}\n"
             ));
+                output.push_str(&format!(
+                "pub fn encode_binary_{function_name}(input: &[u8]) -> Result<Vec<u8>, String> {{ let value: {native_name} = serde_json::from_slice(input).map_err(|error| error.to_string())?; let mut encoder = typikon::Encoder::with_capacity(typikon::DEFAULT_MAX_PACKET_SIZE, 128); typikon::WireCodec::encode(&value, &mut encoder).map_err(|error| format!(\"{{error:?}}\"))?; encoder.finish().map_err(|error| format!(\"{{error:?}}\")) }}\n"
+            ));
+                output.push_str(&format!(
+                "pub fn decode_binary_{function_name}(input: &[u8]) -> Result<Vec<u8>, String> {{ let mut decoder = typikon::Decoder::new(input, typikon::DEFAULT_MAX_PACKET_SIZE).map_err(|error| format!(\"{{error:?}}\"))?; let value: {native_name} = typikon::WireCodec::decode(&mut decoder).map_err(|error| format!(\"{{error:?}}\"))?; if !decoder.is_finished() {{ return Err(\"trailing bytes\".into()); }} serde_json::to_vec(&value).map_err(|error| error.to_string()) }}\n"
+            ));
             } else {
                 output.push_str(&format!(
                 "pub fn encode_json_{function_name}(input: &[u8]) -> Result<Vec<u8>, String> {{ let value: {native_name} = serde_json::from_slice(input).map_err(|error| error.to_string())?; typikon::TypikonCodec::encode(&value).map_err(|error| format!(\"{{error:?}}\")) }}\n"
             ));
                 output.push_str(&format!(
             "pub fn decode_json_{function_name}(input: &[u8]) -> Result<Vec<u8>, String> {{ let value: {native_name} = typikon::TypikonCodec::decode(input).map_err(|error| format!(\"{{error:?}}\"))?; serde_json::to_vec(&value).map_err(|error| error.to_string()) }}\n"
+        ));
+                output.push_str(&format!(
+            "pub fn encode_binary_{function_name}(input: &[u8]) -> Result<Vec<u8>, String> {{ let value: {native_name} = serde_json::from_slice(input).map_err(|error| error.to_string())?; typikon::TypikonCodec::encode(&value).map_err(|error| format!(\"{{error:?}}\")) }}\n"
+        ));
+                output.push_str(&format!(
+            "pub fn decode_binary_{function_name}(input: &[u8]) -> Result<Vec<u8>, String> {{ let value: {native_name} = typikon::TypikonCodec::decode(input).map_err(|error| format!(\"{{error:?}}\"))?; serde_json::to_vec(&value).map_err(|error| error.to_string()) }}\n"
         ));
             }
             output.push_str(&format!(
@@ -384,6 +396,24 @@ pub fn generate_bridge(schema: &Schema, native_file: &str, kind: BridgeKind) -> 
             let function_name = snake_case(name);
             output.push_str(&format!(
                 "        \"{}\" => decode_json_{}(&input).map(Buffer::from).map_err(napi::Error::from_reason),\n",
+                function_name, function_name
+            ));
+        }
+        output
+            .push_str("        _ => Err(napi::Error::from_reason(\"unknown schema type\")), } }\n");
+        output.push_str("\n#[napi]\npub fn encode_binary(layer: u16, type_name: String, input: Buffer) -> napi::Result<Buffer> { check_layer(layer)?; match type_name.as_str() {\n");
+        for item in &schema.items {
+            let function_name = snake_case(item_name(item));
+            output.push_str(&format!(
+                "        \"{}\" => encode_binary_{}(&input).map(Buffer::from).map_err(napi::Error::from_reason),\n",
+                function_name, function_name
+            ));
+        }
+        output.push_str("        _ => Err(napi::Error::from_reason(\"unknown schema type\")), } }\n\n#[napi]\npub fn decode_binary(layer: u16, type_name: String, input: Buffer) -> napi::Result<Buffer> { check_layer(layer)?; match type_name.as_str() {\n");
+        for item in &schema.items {
+            let function_name = snake_case(item_name(item));
+            output.push_str(&format!(
+                "        \"{}\" => decode_binary_{}(&input).map(Buffer::from).map_err(napi::Error::from_reason),\n",
                 function_name, function_name
             ));
         }

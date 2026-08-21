@@ -46,6 +46,13 @@ if (new TextDecoder().decode(view.username) !== "zda") process.exit(1);
 try { m.decodeUserView(wire.slice(0, -1)); process.exit(1); } catch (_) {}
 const lazy = m.decodeUserLazyView(wire);
 if (lazy.roles.length !== 1 || new TextDecoder().decode(lazy.roles.at(0)) !== "admin") process.exit(1);
+const mapWire = m.encodeMessage({id: 1, chat_id: 2, sender: {id: 7, username: "", display_name: "", flags: 0, presence: "Online", roles: []}, text: "", attachments: [], metadata: {a: "1", b: "2"}});
+const unsorted = mapWire.slice();
+const mapKey = unsorted.lastIndexOf(97);
+if (mapKey < 0) process.exit(1);
+unsorted[mapKey] = 122;
+try { m.decodeMessageView(unsorted); process.exit(1); } catch (_) {}
+try { m.decodeMessageLazyView(unsorted); process.exit(1); } catch (_) {}
 JS
 node_wire="$(node - "$temp_dir/typikon_typescript_native.node" <<'JS'
 const n = require(process.argv[2]);

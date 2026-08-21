@@ -119,6 +119,36 @@ func TestBorrowedViewsCoverNestedAndEnumPayloads(t *testing.T) {
 	if !ok || string(edited.Text) != "edit" {
 		t.Fatalf("unexpected update view: %#v", update)
 	}
+	lazy, err := BorrowMessageLazy(wire)
+	if err != nil {
+		t.Fatalf("BorrowMessageLazy: %v", err)
+	}
+	attachment, ok := lazy.Attachment(0)
+	if !ok || string(attachment.NameBytes()) != "a.txt" {
+		t.Fatalf("unexpected lazy attachment")
+	}
+	entry, ok := lazy.Metadata(0)
+	if !ok || string(entry.Key) != "k" {
+		t.Fatalf("unexpected lazy metadata")
+	}
+}
+
+func TestBorrowedViewsRejectUnsortedMap(t *testing.T) {
+	wire, err := EncodeMessage(Message{Sender: User{Presence: Presence("Online")}, Metadata: map[string]string{"a": "1", "b": "2"}})
+	if err != nil {
+		t.Fatalf("EncodeMessage: %v", err)
+	}
+	pos := bytes.Index(wire, []byte("a"))
+	if pos < 0 {
+		t.Fatal("map key not found")
+	}
+	wire[pos] = 'z'
+	if _, err := BorrowMessage(wire); err == nil {
+		t.Fatal("BorrowMessage accepted unsorted map")
+	}
+	if _, err := BorrowMessageLazy(wire); err == nil {
+		t.Fatal("BorrowMessageLazy accepted unsorted map")
+	}
 }
 
 func TestAttachmentBorrowedViewAliasesPacket(t *testing.T) {

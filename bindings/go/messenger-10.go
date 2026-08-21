@@ -157,6 +157,24 @@ func cid(d *wireDecoder, want []byte) error {
 	}
 	return nil
 }
+
+func wireBytesCompare(a, b []byte) int {
+	for i := 0; i < len(a) && i < len(b); i++ {
+		if a[i] < b[i] {
+			return -1
+		}
+		if a[i] > b[i] {
+			return 1
+		}
+	}
+	if len(a) < len(b) {
+		return -1
+	}
+	if len(a) > len(b) {
+		return 1
+	}
+	return 0
+}
 func bridgePtr(data []byte) *C.uint8_t {
 	if len(data) == 0 {
 		return nil
@@ -800,10 +818,15 @@ func readMessageView(d *wireDecoder) (MessageView, error) {
 		return v, e
 	}
 	v.metadata = make([]MapEntryView, c)
+	var previousKey []byte
 	for i := range v.metadata {
 		if v.metadata[i].Key, e = d.bytes(); e != nil {
 			return v, e
 		}
+		if i > 0 && wireBytesCompare(previousKey, v.metadata[i].Key) >= 0 {
+			return v, fmt.Errorf("map keys are not strictly sorted")
+		}
+		previousKey = v.metadata[i].Key
 		if v.metadata[i].Value, e = d.bytes(); e != nil {
 			return v, e
 		}
@@ -813,6 +836,233 @@ func readMessageView(d *wireDecoder) (MessageView, error) {
 func BorrowMessage(wire []byte) (MessageView, error) {
 	d := wireDecoder{b: wire}
 	v, e := readMessageView(&d)
+	if e == nil {
+		e = d.done()
+	}
+	return v, e
+}
+
+type UserRolesLazyView struct {
+	wire         []byte
+	start, count int
+}
+
+func (v UserRolesLazyView) Len() int { return v.count }
+func (v UserRolesLazyView) At(i int) ([]byte, bool) {
+	if i < 0 || i >= v.count {
+		return nil, false
+	}
+	d := wireDecoder{b: v.wire, p: v.start}
+	var value []byte
+	var e error
+	for n := 0; n <= i; n++ {
+		value, e = d.bytes()
+		if e != nil {
+			return nil, false
+		}
+	}
+	return value, true
+}
+
+type UserLazyView struct {
+	id, flags   uint64
+	username    []byte
+	displayName []byte
+	avatarURL   []byte
+	presence    Presence
+	roles       UserRolesLazyView
+}
+
+func (v UserLazyView) ID() uint64                     { return v.id }
+func (v UserLazyView) UsernameBytes() []byte          { return v.username }
+func (v UserLazyView) DisplayNameBytes() []byte       { return v.displayName }
+func (v UserLazyView) RolesLen() int                  { return v.roles.Len() }
+func (v UserLazyView) RoleBytes(i int) ([]byte, bool) { return v.roles.At(i) }
+
+func readUserLazyView(d *wireDecoder) (UserLazyView, error) {
+	var v UserLazyView
+	if err := cid(d, UserCID); err != nil {
+		return v, err
+	}
+	var e error
+	if v.id, e = d.u64(); e != nil {
+		return v, e
+	}
+	if v.username, e = d.bytes(); e != nil {
+		return v, e
+	}
+	if v.displayName, e = d.bytes(); e != nil {
+		return v, e
+	}
+	var flags uint16
+	if flags, e = d.u16(); e != nil {
+		return v, e
+	}
+	v.flags = uint64(flags)
+	if v.flags&(1<<2) != 0 {
+		if v.avatarURL, e = d.bytes(); e != nil {
+			return v, e
+		}
+	}
+	if v.presence, e = decode_presence(d); e != nil {
+		return v, e
+	}
+	var n uint64
+	if n, e = d.varint(); e != nil {
+		return v, e
+	}
+	c, e := count(n)
+	if e != nil {
+		return v, e
+	}
+	start := d.p
+	for i := 0; i < c; i++ {
+		if _, e = d.bytes(); e != nil {
+			return v, e
+		}
+	}
+	v.roles = UserRolesLazyView{wire: d.b, start: start, count: c}
+	return v, nil
+}
+
+func BorrowUserLazy(wire []byte) (UserLazyView, error) {
+	d := wireDecoder{b: wire}
+	v, e := readUserLazyView(&d)
+	if e == nil {
+		e = d.done()
+	}
+	return v, e
+}
+
+type MessageAttachmentsLazyView struct {
+	wire         []byte
+	start, count int
+}
+
+func (v MessageAttachmentsLazyView) Len() int { return v.count }
+func (v MessageAttachmentsLazyView) At(i int) (AttachmentView, bool) {
+	var zero AttachmentView
+	if i < 0 || i >= v.count {
+		return zero, false
+	}
+	d := wireDecoder{b: v.wire, p: v.start}
+	var value AttachmentView
+	var e error
+	for n := 0; n <= i; n++ {
+		value, e = readAttachmentView(&d)
+		if e != nil {
+			return zero, false
+		}
+	}
+	return value, true
+}
+
+type MessageMetadataLazyView struct {
+	wire         []byte
+	start, count int
+}
+
+func (v MessageMetadataLazyView) Len() int { return v.count }
+func (v MessageMetadataLazyView) At(i int) (MapEntryView, bool) {
+	var zero MapEntryView
+	if i < 0 || i >= v.count {
+		return zero, false
+	}
+	d := wireDecoder{b: v.wire, p: v.start}
+	var value MapEntryView
+	var e error
+	for n := 0; n <= i; n++ {
+		value.Key, e = d.bytes()
+		if e != nil {
+			return zero, false
+		}
+		value.Value, e = d.bytes()
+		if e != nil {
+			return zero, false
+		}
+	}
+	return value, true
+}
+
+type MessageLazyView struct {
+	id, chatID  uint64
+	sender      UserView
+	text        []byte
+	attachments MessageAttachmentsLazyView
+	metadata    MessageMetadataLazyView
+}
+
+func (v MessageLazyView) ID() uint64                              { return v.id }
+func (v MessageLazyView) ChatID() uint64                          { return v.chatID }
+func (v MessageLazyView) Sender() UserView                        { return v.sender }
+func (v MessageLazyView) TextBytes() []byte                       { return v.text }
+func (v MessageLazyView) AttachmentsLen() int                     { return v.attachments.Len() }
+func (v MessageLazyView) Attachment(i int) (AttachmentView, bool) { return v.attachments.At(i) }
+func (v MessageLazyView) MetadataLen() int                        { return v.metadata.Len() }
+func (v MessageLazyView) Metadata(i int) (MapEntryView, bool)     { return v.metadata.At(i) }
+
+func readMessageLazyView(d *wireDecoder) (MessageLazyView, error) {
+	var v MessageLazyView
+	if err := cid(d, MessageCID); err != nil {
+		return v, err
+	}
+	var e error
+	if v.id, e = d.u64(); e != nil {
+		return v, e
+	}
+	if v.chatID, e = d.u64(); e != nil {
+		return v, e
+	}
+	if v.sender, e = readUserView(d); e != nil {
+		return v, e
+	}
+	if v.text, e = d.bytes(); e != nil {
+		return v, e
+	}
+	var n uint64
+	if n, e = d.varint(); e != nil {
+		return v, e
+	}
+	c, e := count(n)
+	if e != nil {
+		return v, e
+	}
+	start := d.p
+	for i := 0; i < c; i++ {
+		if _, e = readAttachmentView(d); e != nil {
+			return v, e
+		}
+	}
+	v.attachments = MessageAttachmentsLazyView{wire: d.b, start: start, count: c}
+	if n, e = d.varint(); e != nil {
+		return v, e
+	}
+	c, e = count(n)
+	if e != nil {
+		return v, e
+	}
+	start = d.p
+	var previousKey []byte
+	for i := 0; i < c; i++ {
+		var key []byte
+		if key, e = d.bytes(); e != nil {
+			return v, e
+		}
+		if i > 0 && wireBytesCompare(previousKey, key) >= 0 {
+			return v, fmt.Errorf("map keys are not strictly sorted")
+		}
+		previousKey = key
+		if _, e = d.bytes(); e != nil {
+			return v, e
+		}
+	}
+	v.metadata = MessageMetadataLazyView{wire: d.b, start: start, count: c}
+	return v, nil
+}
+
+func BorrowMessageLazy(wire []byte) (MessageLazyView, error) {
+	d := wireDecoder{b: wire}
+	v, e := readMessageLazyView(&d)
 	if e == nil {
 		e = d.done()
 	}

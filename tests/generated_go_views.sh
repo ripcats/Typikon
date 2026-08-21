@@ -60,6 +60,22 @@ func TestGeneratedBorrowedViews(t *testing.T) {
 	if !ok || string(lazyEntry.Key) != "k" {
 		t.Fatalf("unexpected lazy metadata: %#v, %v", lazyEntry, ok)
 	}
+	badWire, err := EncodeMessage(Message{
+		Sender: User{Presence: Presence("Online")},
+		Attachments: []Attachment{},
+		Metadata: map[string]string{"a": "1", "b": "2"},
+	})
+	if err != nil {
+		t.Fatalf("EncodeMessage for map validation: %v", err)
+	}
+	if pos := bytes.Index(badWire, []byte("a")); pos >= 0 {
+		badWire[pos] = 'z'
+	} else {
+		t.Fatal("map key not found in packet")
+	}
+	if _, err := BorrowMessage(badWire); err == nil {
+		t.Fatal("BorrowMessage accepted unsorted map keys")
+	}
 
 	textPos := bytes.Index(wire, []byte("hello"))
 	if textPos < 0 {

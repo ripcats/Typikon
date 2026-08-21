@@ -107,6 +107,7 @@ func bridgePtr(data []byte) *C.uint8_t { if len(data)==0 { return nil }; return 
 "#,
     );
     output = output.replace("__TYPIKON_HEADER__", header_name);
+    output.push_str("func wireBytesCompare(a,b []byte) int { for i:=0;i<len(a)&&i<len(b);i++ { if a[i]<b[i] { return -1 }; if a[i]>b[i] { return 1 } }; if len(a)<len(b) { return -1 }; if len(a)>len(b) { return 1 }; return 0 }\n");
     for item in &schema.items {
         generate_go_item(item, schema, &mut output);
     }
@@ -405,8 +406,21 @@ fn go_decode_view_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut String) 
             out.push_str("}};");
         }
         Type::Map(key, value) => {
-            out.push_str(&format!("{{var n uint64;n,e=d.varint();if e!=nil{{return v,e}};var c int;c,e=count(n);if e!=nil{{return v,e}};{lhs}=make({},c);for i:=range {lhs}{{", go_view_type(ty, schema)));
+            out.push_str(&format!("{{var n uint64;n,e=d.varint();if e!=nil{{return v,e}};var c int;c,e=count(n);if e!=nil{{return v,e}};{lhs}=make({},c);var previousKey {};for i:=range {lhs}{{", go_view_type(ty, schema), go_view_type(key, schema)));
             go_decode_view_type(key, &format!("{lhs}[i].Key"), schema, out);
+            let key_expr = format!("{lhs}[i].Key");
+            let key_check = if matches!(key.as_ref(), Type::Primitive(name) if name == "String")
+                || is_bytes_type(key)
+            {
+                format!(
+                    "if i>0&&wireBytesCompare(previousKey,{key_expr})>=0{{return v,fmt.Errorf(\"map keys are not strictly sorted\")}};previousKey={key_expr};"
+                )
+            } else {
+                format!(
+                    "if i>0&&previousKey>={key_expr}{{return v,fmt.Errorf(\"map keys are not strictly sorted\")}};previousKey={key_expr};"
+                )
+            };
+            out.push_str(&key_check);
             go_decode_view_type(value, &format!("{lhs}[i].Value"), schema, out);
             out.push_str("}};");
         }
@@ -629,6 +643,7 @@ pub fn generate_typescript_binding(schema: &Schema) -> String {
         .replace("constructor(private readonly b: Uint8Array) {} take(n: number): Uint8Array", "constructor(private readonly b: Uint8Array, p = 0) { this.p = p; } position(): number { return this.p; } take(n: number): Uint8Array")
         .replace("done(): void { if (this.p !== this.b.length)", "seek(position: number): void { if (position < 0 || position > this.b.length) throw new Error('invalid decoder position'); this.p = position; } done(): void { if (this.p !== this.b.length)");
     output.push_str("export class LazyCollection<T> { constructor(private readonly wire: Uint8Array, private readonly start: number, readonly length: number, private readonly decode: (decoder: WireDecoder) => T) {} at(index: number): T { if (!Number.isInteger(index) || index < 0 || index >= this.length) throw new RangeError('collection index out of range'); const decoder = new WireDecoder(this.wire, this.start); let value!: T; for (let i = 0; i <= index; i++) value = this.decode(decoder); return value; } }\n\n");
+    output.push_str("const wireBytesCompare = (a: Uint8Array, b: Uint8Array): number => { for (let i = 0; i < Math.min(a.length, b.length); i++) { if (a[i] < b[i]) return -1; if (a[i] > b[i]) return 1; } return a.length - b.length; };\n\n");
     output = output.replace(
         "validateBinary(layer: number, typeName: string, input: Uint8Array): void;",
         "validateBinary(layer: number, typeName: string, input: Uint8Array): void; borrowBinary(layer: number, typeName: string, input: Uint8Array): Uint8Array;",
@@ -1044,8 +1059,38 @@ fn generate_typescript_lazy_view_struct(
                 .replace("(d)", "(itemDecoder)");
             let scan_expression = item_expression.replace("itemDecoder.", "d.");
             let field_id = field.name.replace('_', "");
+            let scan = if let Type::Map(key, value) = &field.ty {
+                let mut key_expr = String::new();
+                typescript_decode_view_expression(key, schema, &mut key_expr);
+                let mut value_expr = String::new();
+                typescript_decode_view_expression(value, schema, &mut value_expr);
+                let key_compare = if matches!(key.as_ref(), Type::Primitive(name) if name == "String")
+                    || is_bytes_type(key)
+                {
+                    "wireBytesCompare(previousKey, key)"
+                } else {
+                    "previousKey >= key ? 0 : -1"
+                };
+                format!(
+                    "const key = {key_expr}; if (previousKey !== undefined && {key_compare} >= 0) throw new Error('map keys are not strictly sorted'); previousKey = key; {value_expr};"
+                )
+            } else {
+                scan_expression
+            };
+            let previous = if matches!(&field.ty, Type::Map(_, _)) {
+                let key = match &field.ty {
+                    Type::Map(key, _) => key,
+                    _ => unreachable!(),
+                };
+                format!(
+                    " let previousKey: {} | undefined;",
+                    typescript_view_type(key, schema)
+                )
+            } else {
+                String::new()
+            };
             format!(
-                " const {field_id}Count = d.varint(); const {field_id}Start = d.position(); for (let i = 0; i < {field_id}Count; i++) {{ {scan_expression} }} {lhs} = new LazyCollection(wire, {field_id}Start, {field_id}Count, (itemDecoder: WireDecoder) => {callback_expression});"
+                " const {field_id}Count = d.varint();{previous} const {field_id}Start = d.position(); for (let i = 0; i < {field_id}Count; i++) {{ {scan} }} {lhs} = new LazyCollection(wire, {field_id}Start, {field_id}Count, (itemDecoder: WireDecoder) => {callback_expression});"
             )
         } else {
             String::new()
@@ -1137,14 +1182,22 @@ fn typescript_decode_view_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut 
             out.push_str(");");
         }
         Type::Map(key, value) => {
+            let key_type = typescript_view_type(key, schema);
+            let mut key_expression = String::new();
+            typescript_decode_view_expression(key, schema, &mut key_expression);
+            let mut value_expression = String::new();
+            typescript_decode_view_expression(value, schema, &mut value_expression);
+            let compare = if matches!(key.as_ref(), Type::Primitive(name) if name == "String")
+                || is_bytes_type(key)
+            {
+                "wireBytesCompare(previousKey, key)"
+            } else {
+                "previousKey >= key ? 0 : -1"
+            };
             out.push_str(&format!(
-                " {} = Array.from({{ length: d.varint() }}, () => ({{ key: ",
-                lhs
+                " {{ const count = d.varint(); let previousKey: {} | undefined; {} = Array.from({{ length: count }}, () => {{ const key = {}; if (previousKey !== undefined && {} >= 0) throw new Error('map keys are not strictly sorted'); previousKey = key; return {{ key, value: {} }}; }}); }}",
+                key_type, lhs, key_expression, compare, value_expression
             ));
-            typescript_decode_view_expression(key, schema, out);
-            out.push_str(", value: ");
-            typescript_decode_view_expression(value, schema, out);
-            out.push_str(" }));");
         }
     }
 }

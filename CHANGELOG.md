@@ -27,6 +27,8 @@ All notable changes to Typikon since its initial public beta are documented here
 - Added runtime coverage for freshly generated Go borrowed views, including nested values, enum payloads, aliasing, and truncated wire.
 - Added an owner-preserving TypeScript native `borrowBinary` entry point and Python `BorrowedPacket` wrappers for validated packet-backed access.
 - Added generated Go `*LazyView` and TypeScript `decode*LazyView` collection APIs that rescan packet-backed ranges instead of allocating element metadata.
+- Updated the checked-in Go Layer 10 artifact with lazy views and Map ordering/duplicate-key validation in borrowed and lazy paths.
+- Added Map ordering and duplicate-key rejection checks to generated Go and TypeScript borrowed/lazy views.
 
 ### Changed
 

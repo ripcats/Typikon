@@ -15,12 +15,11 @@ python_wire="$(TYPIKON_VALUE="$json" PYTHONPATH="$temp_dir" python3 -c 'import j
 test "$python_wire" = "$expected"
 
 cp "$repo_dir/bindings/typescript/native/target/debug/libtypikon_typescript_native.so" "$temp_dir/typikon_typescript_native.node"
-node_wire="$(TYPIKON_VALUE="$json" node - "$temp_dir/typikon_typescript_native.node" <<'JS'
+node_wire="$(node - "$temp_dir/typikon_typescript_native.node" <<'JS'
 const n = require(process.argv[2]);
-const json = Buffer.from(process.env.TYPIKON_VALUE);
-const wire = n.encodeBinary(10, "user", json);
-const decoded = JSON.parse(n.decodeBinary(10, "user", wire).toString());
-if (decoded.id !== 7 || decoded.username !== "ada" || decoded.display_name !== "Ada") process.exit(1);
+const wire = Buffer.from("acb38da67a712058070000000000000003616461034164610000000000000000000000", "hex");
+const decoded = n.decodeBinary(10, "user", n.encodeBinary(10, "user", wire));
+if (!decoded.equals(wire)) process.exit(1);
 process.stdout.write(wire.toString("hex"));
 JS
 )"

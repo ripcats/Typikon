@@ -5,6 +5,7 @@ mod ast;
 mod bridge;
 mod codec;
 mod codegen;
+mod compatibility;
 mod constructor;
 mod error;
 mod ffi;
@@ -25,6 +26,7 @@ pub use codec::{
     DEFAULT_MAX_PACKET_SIZE, TypikonCodec, decode_borrowed_value, decode_value, encode_value,
 };
 pub use codegen::{generate_public_schema, generate_rust};
+pub use compatibility::{CompatibilityError, is_backward_compatible};
 pub use constructor::CID_BYTES;
 pub use constructor::{
     ConstructorDecoder, ConstructorEncoder, cid_bytes, constructor_cid, constructor_cid_bytes,

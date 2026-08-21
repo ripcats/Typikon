@@ -524,7 +524,7 @@ fn main() {
         tl_wire.len()
     );
     println!(
-        "format=tl allocations_owned={} allocations_borrowed={}",
+        "format=tl_style allocations_owned={} allocations_borrowed={}",
         tl_owned_allocs, tl_view_allocs
     );
 }

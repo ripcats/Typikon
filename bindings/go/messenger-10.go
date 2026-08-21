@@ -864,6 +864,18 @@ func (v UserRolesLazyView) At(i int) ([]byte, bool) {
 	return value, true
 }
 
+type UserRolesLazyViewIter struct {
+	view  UserRolesLazyView
+	index int
+}
+
+func (v UserRolesLazyView) Iter() *UserRolesLazyViewIter { return &UserRolesLazyViewIter{view: v} }
+func (it *UserRolesLazyViewIter) Next() ([]byte, bool) {
+	value, ok := it.view.At(it.index)
+	it.index++
+	return value, ok
+}
+
 type UserLazyView struct {
 	id, flags   uint64
 	username    []byte
@@ -957,6 +969,20 @@ func (v MessageAttachmentsLazyView) At(i int) (AttachmentView, bool) {
 	return value, true
 }
 
+type MessageAttachmentsLazyViewIter struct {
+	view  MessageAttachmentsLazyView
+	index int
+}
+
+func (v MessageAttachmentsLazyView) Iter() *MessageAttachmentsLazyViewIter {
+	return &MessageAttachmentsLazyViewIter{view: v}
+}
+func (it *MessageAttachmentsLazyViewIter) Next() (AttachmentView, bool) {
+	value, ok := it.view.At(it.index)
+	it.index++
+	return value, ok
+}
+
 type MessageMetadataLazyView struct {
 	wire         []byte
 	start, count int
@@ -982,6 +1008,20 @@ func (v MessageMetadataLazyView) At(i int) (MapEntryView, bool) {
 		}
 	}
 	return value, true
+}
+
+type MessageMetadataLazyViewIter struct {
+	view  MessageMetadataLazyView
+	index int
+}
+
+func (v MessageMetadataLazyView) Iter() *MessageMetadataLazyViewIter {
+	return &MessageMetadataLazyViewIter{view: v}
+}
+func (it *MessageMetadataLazyViewIter) Next() (MapEntryView, bool) {
+	value, ok := it.view.At(it.index)
+	it.index++
+	return value, ok
 }
 
 type MessageLazyView struct {

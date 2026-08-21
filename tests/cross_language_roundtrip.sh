@@ -25,6 +25,7 @@ wire = bytes.fromhex("acb38da67a712058070000000000000003616461034164610000000000
 packet = messenger_10.borrowed_packet_user(wire)
 assert packet.type_name == "User"
 assert packet.wire.tobytes() == wire
+assert packet.wire.obj is wire
 PY
 
 cp "$repo_dir/bindings/typescript/native/target/debug/libtypikon_typescript_native.so" "$temp_dir/typikon_typescript_native.node"
@@ -49,6 +50,7 @@ if (lazy.roles.length !== 1 || new TextDecoder().decode(lazy.roles.at(0)) !== "a
 const lazyMessageWire = m.encodeMessage({id: 1, chat_id: 2, sender: {id: 7, username: "ada", display_name: "Ada", flags: 0, presence: "Online", roles: ["admin"]}, text: "", attachments: [], metadata: {}});
 const lazyMessage = m.decodeMessageLazyView(lazyMessageWire);
 if (lazyMessage.sender.roles.length !== 1 || new TextDecoder().decode(lazyMessage.sender.roles.at(0)) !== "admin") process.exit(1);
+if ([...lazyMessage.sender.roles].length !== 1) process.exit(1);
 const mapWire = m.encodeMessage({id: 1, chat_id: 2, sender: {id: 7, username: "", display_name: "", flags: 0, presence: "Online", roles: []}, text: "", attachments: [], metadata: {a: "1", b: "2"}});
 const unsorted = mapWire.slice();
 const mapKey = unsorted.lastIndexOf(97);
@@ -62,8 +64,11 @@ const n = require(process.argv[2]);
 const wire = Buffer.from("acb38da67a712058070000000000000003616461034164610000000000000000000000", "hex");
 const decoded = n.decodeBinary(10, "user", n.encodeBinary(10, "user", wire));
 if (!decoded.equals(wire)) process.exit(1);
-const borrowed = n.borrowBinary(10, "user", wire);
-if (!borrowed.equals(wire)) process.exit(1);
+const borrowedInput = Buffer.from(wire);
+const borrowed = n.borrowBinary(10, "user", borrowedInput);
+if (!borrowed.equals(borrowedInput)) process.exit(1);
+borrowedInput[0] ^= 1;
+if (borrowed[0] !== borrowedInput[0]) process.exit(1);
 process.stdout.write(wire.toString("hex"));
 JS
 )"

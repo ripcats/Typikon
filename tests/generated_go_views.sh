@@ -59,6 +59,10 @@ func TestGeneratedBorrowedViews(t *testing.T) {
 	if !ok || string(lazyRole) != "admin" {
 		t.Fatalf("unexpected nested lazy role: %q, %v", lazyRole, ok)
 	}
+	iterRole, ok := lazy.Sender.Roles.Iter().Next()
+	if !ok || string(iterRole) != "admin" {
+		t.Fatalf("unexpected lazy iterator role: %q, %v", iterRole, ok)
+	}
 	lazyAttachment, ok := lazy.Attachments.At(0)
 	if !ok || string(lazyAttachment.Name) != "a.txt" {
 		t.Fatalf("unexpected lazy attachment: %#v, %v", lazyAttachment, ok)

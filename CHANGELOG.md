@@ -31,6 +31,7 @@ All notable changes to Typikon since its initial public beta are documented here
 - Added Map ordering and duplicate-key rejection checks to generated Go and TypeScript borrowed/lazy views.
 - Propagated Go lazy views through nested named structs, so nested collections remain packet-backed instead of falling back to materialized views.
 - Propagated TypeScript lazy views through nested named structs with owner-aware decoder callbacks.
+- Added Go lazy `Iter` and TypeScript lazy `[Symbol.iterator]` APIs, plus native TypeScript and Python owner/aliasing regression checks.
 
 ### Changed
 

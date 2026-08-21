@@ -131,14 +131,14 @@ struct Attachment {
 
 ## Zero-copy decode — beta
 
-Generated Rust layer создаёт borrowed-view для структур с прямыми полями `String` и `Vec<u8>`:
+Generated Rust layer создаёт borrowed-view для структур с прямыми полями `String` и `Vec<u8>`, а также рекурсивно протягивает view через вложенные named structures:
 
 ~~~rust
 let message = MessageRef::decode_borrowed(&packet)?;
 let text: &str = message.text;
 ~~~
 
-`&str` и `&[u8]` указывают прямо внутрь входного packet buffer, поэтому buffer обязан жить дольше view. Текущая первая фаза zero-copy охватывает только прямые строковые и byte-поля. Вложенные named structures, обычные `Vec<T>`, `Map<K, V>` и объекты language bridge пока декодируются как owned values.
+`&str` и `&[u8]` указывают прямо внутрь входного packet buffer, поэтому buffer обязан жить дольше view. Например, `MessageRef.sender` имеет тип `UserRef<'a>`, и строки внутри него используют тот же buffer. Элементы коллекций, enum payloads, `Map<K, V>` и объекты language bridge пока декодируются как owned values.
 
 ### Flags и Guard-биты
 

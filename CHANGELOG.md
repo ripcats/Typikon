@@ -8,6 +8,7 @@ All notable changes to Typikon since its initial public beta are documented here
 
 - Public `BorrowedWireCodec<'a>` and `decode_borrowed_value` APIs.
 - Generated `TypeRef<'a>` Rust views for zero-copy decoding of direct `String` and `Vec<u8>` fields.
+- Borrowed views now propagate through direct named-struct fields, so nested `UserRef<'a>` values keep pointing into the original packet.
 - Reusable encoder buffers, exact generated size hints, borrowed string/byte decoding, and binary TypeScript bridge entry points.
 - Reproducible `cargo bench --bench wire` benchmark for message and 64 KiB payload paths.
 - Python, TypeScript, and Go golden wire round-trip checks.
@@ -32,9 +33,9 @@ All notable changes to Typikon since its initial public beta are documented here
 
 ### Current zero-copy scope
 
-- Zero-copy: direct Rust `String` → `&str` and `Vec<u8>` → `&[u8]` fields.
-- Still owned: nested named structures, general `Vec<T>`, `Map<K, V>`, and language bridges that materialize JSON/application objects.
-- Planned: recursively borrowed structures/enums, lazy repeated/map views, and vectored TCP encoding.
+- Zero-copy: direct Rust `String` → `&str`, `Vec<u8>` → `&[u8]`, and recursively direct named-struct fields.
+- Still owned: collection elements, enum payloads, `Map<K, V>`, and language bridges that materialize JSON/application objects.
+- Planned: recursively borrowed enums, lazy repeated/map views, and vectored TCP encoding.
 
 ## 0.2.0 — initial public beta
 

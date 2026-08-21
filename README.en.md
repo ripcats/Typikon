@@ -131,14 +131,14 @@ Supported types:
 
 ## Zero-copy decoding — beta
 
-The generated Rust layer emits borrowed views for structures with direct `String` and `Vec<u8>` fields:
+The generated Rust layer emits borrowed views for structures with direct `String` and `Vec<u8>` fields and recursively propagates them through nested named structures:
 
 ~~~rust
 let message = MessageRef::decode_borrowed(&packet)?;
 let text: &str = message.text;
 ~~~
 
-The resulting `&str` and `&[u8]` point directly into the input packet buffer, so the buffer must outlive the view. This first zero-copy phase covers direct string and byte fields only. Nested named structures, general `Vec<T>`, `Map<K, V>`, and language-bridge objects are still decoded into owned values.
+The resulting `&str` and `&[u8]` point directly into the input packet buffer, so the buffer must outlive the view. For example, `MessageRef.sender` has type `UserRef<'a>`, and its strings use the same buffer. Collection elements, enum payloads, `Map<K, V>`, and language-bridge objects are still decoded into owned values.
 
 ### Flags and guard bits
 

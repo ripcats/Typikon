@@ -1351,12 +1351,13 @@ mod tests {
     #[test]
     fn generated_go_and_typescript_views_cover_borrowable_fields() {
         let schema = parse_schema(
-            "#[version(10)] struct User { id: u64, name: String, tags: Vec<String>, } enum Event { Created { user: User }, }",
+            "#[version(10)] struct User { id: u64, name: String, tags: Vec<String>, } struct Attachment { id: u64, name: String, } enum Event { Created { user: User }, }",
         )
         .unwrap();
         let go = generate_go_binding(&schema, "chat-10.h");
         assert!(go.contains("type UserView struct"));
         assert!(go.contains("func BorrowUser"));
+        assert!(go.contains("func BorrowAttachment"));
         assert!(go.contains("Name []byte"));
         assert!(go.contains("readUserView"));
         let typescript = generate_typescript_binding(&schema);

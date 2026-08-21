@@ -9,7 +9,9 @@
 
 **Typikon is a schema language and compiler for a typed binary wire protocol.**
 
-Define the contract in a human-readable `.typ` schema — Typikon validates its semantics and produces a schema-specific Rust wire core, a public schema with computed **Constructor ID (C-ID)** values, and official cross-platform adapters for Python, Go, and TypeScript. The Rust core supports zero-copy borrowed views for strings, bytes, and collections, while language adapters expose view or memoryview APIs within the ownership model of each runtime.
+Define the contract in a human-readable `.typ` schema — Typikon validates its semantics and produces a schema-specific Rust wire core, a public schema with computed **Constructor ID (C-ID)** values, and official cross-platform adapters for Python, Go, and TypeScript.
+
+The Rust core supports zero-copy borrowed views for strings, bytes, and collections, while language adapters expose view or memoryview APIs within the ownership model of each runtime.
 
 > **Beta release.** The project builds, runs tests, and generates working artifacts, but the protocol format and C-ID rules may still change.
 
@@ -275,13 +277,9 @@ Transport and application logic intentionally remain a separate layer. Typikon f
 
 ## What is actually tested
 
-The current Rust suite contains **60 tests: 57 unit tests and 3 integration tests**. It covers parsing and semantic validation, code generation, reproducible public schemas, the CLI, Layer negotiation, C-IDs, primitive/collection wire round-trips, limits, malformed/truncated input, duplicate map keys, canonical VarInt, borrowed decoding, lazy borrowed collections, Go/TypeScript view generation, vectored writes, and randomized parser/wire inputs.
+The Rust suite contains **60 tests: 57 unit tests and 3 integration tests** covering parsing and semantic validation, code generation, the CLI, Layer/C-ID handling, wire round-trips, limits, malformed input, maps, VarInt, borrowed views, language-view generation, vectored writes, and randomized inputs.
 
-Reproducible benchmarks are available through `cargo bench --bench wire` and `cargo bench --bench compare`. The first measures Typikon internals; the second compares a baseline, a heavy collection-heavy shape, and 64 KiB/1 MiB binary payloads with FlatBuffers: wire size, encoding, owned decoding, borrowed decoding with full iteration, and allocation count. FlatBuffers view paths are reported separately as verified and unchecked; unchecked is only a raw speed ceiling for packets validated elsewhere. Large-payload cases use fewer iterations. Results depend on the CPU and build profile and are not a network benchmark.
-
-The repository also includes build checks for the Python binding and the Go/TypeScript native crates. The TypeScript facade is checked with `npm test`, while the Go facade is checked with `go test ./bindings/go`; the golden wire round-trip matches across Python, TypeScript, and Go.
-
-For a long-running validation pass, use `TYPIKON_STRESS_SECONDS=172800 ./tests/long_validation.sh`. The script repeats release tests, native TypeScript tests, the TypeScript typecheck, and the cross-language round-trip, writing its log to `/home/evgeny/tmp/typikon-long-validation.log`.
+Python/Go/TypeScript bindings and the cross-language round-trip are also checked (`npm test`, `go test ./bindings/go`). Benchmarks are available through `cargo bench --bench wire` and `cargo bench --bench compare`; they measure wire size, encoding/decoding, borrowed views, and allocations, but are not network benchmarks. For long-running validation, use `TYPIKON_STRESS_SECONDS=172800 ./tests/long_validation.sh`.
 
 ## Repository layout
 

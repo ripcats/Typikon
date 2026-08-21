@@ -724,6 +724,15 @@ func readAttachmentView(d *wireDecoder) (AttachmentView, error) {
 	return v, e
 }
 
+func BorrowAttachment(wire []byte) (AttachmentView, error) {
+	d := wireDecoder{b: wire}
+	v, e := readAttachmentView(&d)
+	if e == nil {
+		e = d.done()
+	}
+	return v, e
+}
+
 type MapEntryView struct{ Key, Value []byte }
 type MessageView struct {
 	id, chatID  uint64

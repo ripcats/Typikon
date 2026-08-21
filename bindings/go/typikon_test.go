@@ -121,6 +121,34 @@ func TestBorrowedViewsCoverNestedAndEnumPayloads(t *testing.T) {
 	}
 }
 
+func TestAttachmentBorrowedViewAliasesPacket(t *testing.T) {
+	wire, err := EncodeAttachment(Attachment{Id: 3, Name: "a.txt", MimeType: "text/plain", Size: 5})
+	if err != nil {
+		t.Fatalf("EncodeAttachment: %v", err)
+	}
+	view, err := BorrowAttachment(wire)
+	if err != nil {
+		t.Fatalf("BorrowAttachment: %v", err)
+	}
+	if view.ID() != 3 || string(view.NameBytes()) != "a.txt" || string(view.MimeTypeBytes()) != "text/plain" || view.Size() != 5 {
+		t.Fatalf("unexpected attachment view")
+	}
+	pos := bytes.Index(wire, []byte("a.txt"))
+	if pos < 0 {
+		t.Fatal("attachment name not found in packet")
+	}
+	wire[pos] = 'b'
+	if string(view.NameBytes()) != "b.txt" {
+		t.Fatalf("attachment view does not alias packet: %q", view.NameBytes())
+	}
+}
+
+func TestAttachmentBorrowedViewRejectsMalformedWire(t *testing.T) {
+	if _, err := BorrowAttachment([]byte{0xff}); err == nil {
+		t.Fatal("BorrowAttachment accepted malformed wire")
+	}
+}
+
 func TestBorrowedViewsRejectMalformedWire(t *testing.T) {
 	if _, err := BorrowUser([]byte{0xff}); err == nil {
 		t.Fatal("BorrowUser accepted malformed wire")

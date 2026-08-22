@@ -29,7 +29,7 @@ fn cli_check_and_compile_work_end_to_end() {
     let output_dir = std::env::temp_dir().join(format!("typikon-cli-{}", std::process::id()));
     let _ = fs::remove_dir_all(&output_dir);
     let compile = Command::new(&binary)
-        .arg("compile")
+        .args(["generate", "all"])
         .arg(&schema)
         .arg("--out-dir")
         .arg(&output_dir)
@@ -59,11 +59,11 @@ fn cli_help_is_available_at_global_and_command_levels() {
     assert!(String::from_utf8_lossy(&help.stdout).contains("--public-format"));
 
     let compile_help = Command::new(&binary)
-        .args(["compile", "--help"])
+        .args(["generate", "all", "--help"])
         .output()
         .unwrap();
     assert!(compile_help.status.success());
-    assert!(String::from_utf8_lossy(&compile_help.stdout).contains("Generate Rust"));
+    assert!(String::from_utf8_lossy(&compile_help.stdout).contains("Generate selected"));
     assert!(String::from_utf8_lossy(&compile_help.stdout).contains("--target"));
 
     let generate_help = Command::new(&binary)
@@ -74,7 +74,7 @@ fn cli_help_is_available_at_global_and_command_levels() {
     assert!(String::from_utf8_lossy(&generate_help.stdout).contains("KINDS:"));
 
     let trailing_help = Command::new(&binary)
-        .args(["compile", "schema.typ", "--help"])
+        .args(["generate", "all", "schema.typ", "--help"])
         .output()
         .unwrap();
     assert!(trailing_help.status.success());
@@ -96,7 +96,7 @@ fn cli_defaults_to_native_rust_only_and_selects_one_target() {
     fs::create_dir_all(&python_dir).unwrap();
 
     let rust = Command::new(&binary)
-        .args(["compile", schema.to_str().unwrap(), "--out-dir"])
+        .args(["generate", "all", schema.to_str().unwrap(), "--out-dir"])
         .arg(&rust_dir)
         .output()
         .unwrap();
@@ -107,7 +107,7 @@ fn cli_defaults_to_native_rust_only_and_selects_one_target() {
     assert!(!rust_dir.join("python.layer-8.rs").exists());
 
     let python = Command::new(&binary)
-        .args(["compile", schema.to_str().unwrap(), "--out-dir"])
+        .args(["generate", "all", schema.to_str().unwrap(), "--out-dir"])
         .arg(&python_dir)
         .args(["--target", "python,typescript"])
         .output()
@@ -155,7 +155,7 @@ fn cli_defaults_to_native_rust_only_and_selects_one_target() {
 
     let compact_dir = root.join("compact");
     let compact = Command::new(&binary)
-        .args(["compile", schema.to_str().unwrap(), "--out-dir"])
+        .args(["generate", "all", schema.to_str().unwrap(), "--out-dir"])
         .arg(&compact_dir)
         .args(["--public-format", "compact"])
         .output()

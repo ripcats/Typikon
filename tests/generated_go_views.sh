@@ -6,7 +6,7 @@ temp_dir="$(mktemp -d /tmp/typikon-generated-go.XXXXXX)"
 trap 'rm -rf "$temp_dir"' EXIT
 
 cargo build --quiet --manifest-path "$repo_dir/bindings/go/native/Cargo.toml"
-cargo run --quiet --manifest-path "$repo_dir/Cargo.toml" -- compile \
+cargo run --quiet --manifest-path "$repo_dir/Cargo.toml" -- generate all \
     "$repo_dir/examples/messenger.typ" --out-dir "$temp_dir/generated" --target golang
 gofmt -w "$temp_dir/generated/messenger-10.go"
 

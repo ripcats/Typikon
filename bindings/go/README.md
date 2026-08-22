@@ -6,7 +6,7 @@ From the repository root:
 
 ```bash
 cargo build --manifest-path bindings/go/native/Cargo.toml
-cargo run -- compile examples/messenger.typ --out-dir /tmp/typikon-messenger
+cargo run -- generate all examples/messenger.typ --out-dir /tmp/typikon-messenger
 go test ./bindings/go
 ```
 

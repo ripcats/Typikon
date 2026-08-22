@@ -9,8 +9,8 @@ trap 'rm -rf "$temp_dir"' EXIT
 
 cargo build --quiet --manifest-path "$repo_dir/bindings/python/Cargo.toml"
 cargo build --quiet --manifest-path "$repo_dir/bindings/typescript/native/Cargo.toml"
-cargo run --quiet --manifest-path "$repo_dir/Cargo.toml" -- compile "$repo_dir/examples/messenger.typ" --out-dir "$temp_dir/generated" --target python,typescript
-cargo run --quiet --manifest-path "$repo_dir/Cargo.toml" -- compile "$repo_dir/examples/messenger.typ" --out-dir "$temp_dir/generated-go" --target golang
+cargo run --quiet --manifest-path "$repo_dir/Cargo.toml" -- generate all "$repo_dir/examples/messenger.typ" --out-dir "$temp_dir/generated" --target python,typescript
+cargo run --quiet --manifest-path "$repo_dir/Cargo.toml" -- generate all "$repo_dir/examples/messenger.typ" --out-dir "$temp_dir/generated-go" --target golang
 gofmt -w "$temp_dir/generated-go/messenger-10.go"
 mkdir -p "$temp_dir/generated-js"
 "$repo_dir/bindings/typescript/node_modules/.bin/tsc" --target ES2022 --module commonjs --outDir "$temp_dir/generated-js" "$temp_dir/generated/messenger-10.ts"

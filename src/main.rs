@@ -69,7 +69,7 @@ fn print_help() {
     println!(
         "Typikon — schema compiler for the Typikon binary wire format\n\n\
 USAGE:\n  typikon <COMMAND> [OPTIONS]\n\n\
-COMMANDS:\n  check <SCHEMA>      Validate a schema without writing files\n  compile <SCHEMA>    Alias for generate all\n  generate <KIND>     Generate backend, public, or all artifacts\n  help                Show this help\n\n\
+COMMANDS:\n  check <SCHEMA>      Validate a schema without writing files\n  generate <KIND>     Generate backend, public, or all artifacts\n  help                Show this help\n\n\
 GENERATE KINDS:\n  backend             Rust and selected language backends only\n  public              Public .typ schema only\n  all                 Backends and public schema\n\n\
 OPTIONS:\n  --out-dir <DIR>     Output directory (default: current directory)\n  --target <LIST>     Add language backends: python, golang, typescript\n  --public-format <F> expanded (default) or compact\n  -h, --help          Show command help\n\n\
 EXAMPLES:\n  typikon check examples/messenger.typ\n  typikon generate backend examples/messenger.typ --target python,golang,typescript\n  typikon generate public examples/messenger.typ --out-dir /tmp/public\n  typikon generate all examples/messenger-10.public.typ --out-dir /tmp/all\n"
@@ -80,9 +80,6 @@ fn print_command_help(command: &str) {
     match command {
         "check" => println!(
             "Validate a Typikon schema.\n\nUSAGE:\n  typikon check <SCHEMA>\n\nEXAMPLE:\n  typikon check examples/messenger.typ"
-        ),
-        "compile" => println!(
-            "Generate Rust and public schema artifacts.\n\nUSAGE:\n  typikon compile <SCHEMA> [OPTIONS]\n\nNOTE:\n  compile is an alias for generate all.\n\nOPTIONS:\n  --out-dir <DIR>     Output directory (default: current directory)\n  --target <LIST>     Add python, golang, or typescript backends\n  --public-format <F> expanded (default) or compact\n  -h, --help          Show this help\n"
         ),
         "generate" => println!(
             "Generate selected Typikon artifacts.\n\nUSAGE:\n  typikon generate <KIND> <SCHEMA> [OPTIONS]\n\nKINDS:\n  backend             Rust and selected language backends only\n  public              Public .typ schema only\n  all                 Backend and public artifacts\n\nOPTIONS:\n  --out-dir <DIR>     Output directory (default: current directory)\n  --target <LIST>     python, golang, or typescript (backend/all)\n  --public-format <F> expanded (default) or compact (public/all)\n  -h, --help          Show this help\n"
@@ -113,14 +110,12 @@ fn main() -> ExitCode {
         println!("typikon {}", env!("CARGO_PKG_VERSION"));
         return ExitCode::SUCCESS;
     }
-    if !matches!(command.as_str(), "check" | "compile" | "generate") {
+    if !matches!(command.as_str(), "check" | "generate") {
         eprintln!("unknown command: {command}\n");
         print_help();
         return ExitCode::from(2);
     }
-    let mode = if command == "compile" {
-        Some(GenerateMode::All)
-    } else if command == "generate" {
+    let mode = if command == "generate" {
         let Some(kind) = args.next() else {
             print_command_help("generate");
             return ExitCode::from(2);
@@ -207,8 +202,8 @@ fn main() -> ExitCode {
             println!("valid Layer {}: {}", artifacts.layer, name);
             ExitCode::SUCCESS
         }
-        "compile" | "generate" => {
-            let mode = mode.expect("generation mode is set for compile and generate");
+        "generate" => {
+            let mode = mode.expect("generation mode is set for generate");
             if mode == GenerateMode::Public && !targets.is_empty() {
                 eprintln!("--target cannot be used with public-only generation");
                 return ExitCode::from(2);

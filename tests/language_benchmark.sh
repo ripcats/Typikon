@@ -12,8 +12,8 @@ cargo build --quiet --manifest-path "$repo_dir/bindings/typescript/native/Cargo.
 cargo build --quiet --manifest-path "$repo_dir/bindings/go/native/Cargo.toml"
 cargo build --quiet --manifest-path "$repo_dir/Cargo.toml"
 
-cargo run --quiet --manifest-path "$repo_dir/Cargo.toml" -- compile "$repo_dir/examples/messenger.typ" --out-dir "$temp_dir/generated" --target python,typescript
-cargo run --quiet --manifest-path "$repo_dir/Cargo.toml" -- compile "$repo_dir/examples/messenger.typ" --out-dir "$temp_dir/generated-go" --target golang
+cargo run --quiet --manifest-path "$repo_dir/Cargo.toml" -- generate all "$repo_dir/examples/messenger.typ" --out-dir "$temp_dir/generated" --target python,typescript
+cargo run --quiet --manifest-path "$repo_dir/Cargo.toml" -- generate all "$repo_dir/examples/messenger.typ" --out-dir "$temp_dir/generated-go" --target golang
 gofmt -w "$temp_dir/generated-go/messenger-10.go"
 
 if [[ ! -x "$repo_dir/bindings/typescript/node_modules/.bin/tsc" ]]; then

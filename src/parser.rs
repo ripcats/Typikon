@@ -6,6 +6,7 @@ pub fn parse_schema(source: &str) -> Result<Schema, ParseError> {
     let schema = Parser {
         source,
         position: 0,
+        trivia_error: None,
     }
     .parse_schema()?;
     crate::validate::validate(&schema)?;
@@ -15,6 +16,7 @@ pub fn parse_schema(source: &str) -> Result<Schema, ParseError> {
 struct Parser<'a> {
     source: &'a str,
     position: usize,
+    trivia_error: Option<usize>,
 }
 
 impl<'a> Parser<'a> {
@@ -29,6 +31,12 @@ impl<'a> Parser<'a> {
         let mut items = Vec::new();
         while !self.eof() {
             items.push(self.parse_item()?);
+        }
+        if let Some(position) = self.trivia_error {
+            return Err(ParseError {
+                message: "unterminated block comment".into(),
+                position,
+            });
         }
         Ok(Schema { version, items })
     }
@@ -304,6 +312,16 @@ impl<'a> Parser<'a> {
                     && self.source.as_bytes()[self.position] != b'\n'
                 {
                     self.position += 1;
+                }
+            } else if self.source[self.position..].starts_with("/*") {
+                let start = self.position;
+                let comment_start = self.position + 2;
+                if let Some(end) = self.source[comment_start..].find("*/") {
+                    self.position = comment_start + end + 2;
+                } else {
+                    self.trivia_error = Some(start);
+                    self.position = self.source.len();
+                    break;
                 }
             } else {
                 break;

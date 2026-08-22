@@ -46,19 +46,36 @@ pub fn generate_public_schema_with_format(schema: &Schema, format: PublicSchemaF
                 ));
             }
             Item::Flags(flags) => {
-                output.push_str(&format!(
-                    "#[flags({})] enum {} {{ ",
-                    flags.underlying, flags.name
-                ));
-                output.push_str(
-                    &flags
-                        .bits
-                        .iter()
-                        .map(|bit| format!("{} = {}", bit.name, bit.value))
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                );
-                output.push_str(" }\n\n");
+                if format == PublicSchemaFormat::Compact {
+                    output.push_str(&format!(
+                        "#[flags({})] enum {} {{ ",
+                        flags.underlying, flags.name
+                    ));
+                    output.push_str(
+                        &flags
+                            .bits
+                            .iter()
+                            .map(|bit| format!("{} = {}", bit.name, bit.value))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    );
+                    output.push_str(" }\n\n");
+                } else {
+                    output.push_str(&format!(
+                        "#[flags({})] enum {} {{\n",
+                        flags.underlying, flags.name
+                    ));
+                    for (index, bit) in flags.bits.iter().enumerate() {
+                        let separator = if index + 1 == flags.bits.len() {
+                            ""
+                        } else {
+                            ","
+                        };
+                        output
+                            .push_str(&format!("    {} = {}{}\n", bit.name, bit.value, separator));
+                    }
+                    output.push_str("}\n\n");
+                }
             }
             Item::Struct(item) => {
                 let cid = item.cid.clone().unwrap_or_else(|| constructor_cid(item));
@@ -1112,8 +1129,9 @@ mod tests {
         assert!(public.contains("value: Vec<u64>"));
         assert!(public.contains("#[cid(") && public.contains("\nstruct Message {\n"));
         assert!(compact.contains("struct Message { ") && !compact.contains("\nstruct Message {\n"));
-        assert!(public.contains("#[flags(u8)] enum F { Ready = 0 }"));
         assert!(!public.contains("Ready = 0, }"));
+        assert!(public.contains("#[flags(u8)] enum F {\n    Ready = 0\n}"));
+        assert!(compact.contains("#[flags(u8)] enum F { Ready = 0 }"));
     }
 
     #[test]
@@ -1130,5 +1148,16 @@ mod tests {
         assert!(compact.contains("enum Update { "));
         assert!(!compact.contains("enum Update {\n"));
         assert!(!public.contains("id: u64 },\n"));
+    }
+
+    #[test]
+    fn comments_are_not_emitted_in_public_schema() {
+        let schema = parse_schema(
+            "#[version(1)] /* before */ struct A { // field comment\n value: u8 /* after */ }",
+        )
+        .unwrap();
+        let public = generate_public_schema(&schema);
+        assert!(!public.contains("comment"));
+        assert!(public.contains("value: u8"));
     }
 }

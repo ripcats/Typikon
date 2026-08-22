@@ -188,7 +188,14 @@ mod tests {
 
     #[test]
     fn accepts_whitespace_comments_and_deep_nesting() {
-        for gap in [" ", "\n", "\t", "\r\n", " // comment\n "] {
+        for gap in [
+            " ",
+            "\n",
+            "\t",
+            "\r\n",
+            " // comment\n ",
+            " /* block\n comment */ ",
+        ] {
             let source =
                 format!("#[version(1)]{gap}struct A {{ value: Map<String, Vec<Map<u8, u64>>>, }}");
             assert!(parse_schema(&source).is_ok(), "rejected gap {gap:?}");
@@ -200,6 +207,11 @@ mod tests {
             }
             assert!(parse_schema(&format!("#[version(1)] struct Deep {{ value: {ty}, }}")).is_ok());
         }
+    }
+
+    #[test]
+    fn rejects_unterminated_block_comments() {
+        assert!(parse_schema("#[version(1)] /* missing end struct A {} ").is_err());
     }
 
     #[test]

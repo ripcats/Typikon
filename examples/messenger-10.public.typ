@@ -1,6 +1,10 @@
 #[version(10)]
 
-#[flags(u16)] enum UserFlags { IsBot = 0, IsVerified = 1, HasAvatar = 2 }
+#[flags(u16)] enum UserFlags {
+    IsBot = 0,
+    IsVerified = 1,
+    HasAvatar = 2
+}
 
 enum Presence {
     Online = 0,

@@ -3,7 +3,7 @@
 ![Typikon Protocol](assets/cover.png)
 
 [![Версия](https://img.shields.io/badge/%D0%92%D0%B5%D1%80%D1%81%D0%B8%D1%8F-Beta-5865F2?style=for-the-badge&logo=github&logoColor=white)](#что-реально-проверено)
-[![Тесты](https://img.shields.io/badge/%D0%A2%D0%B5%D1%81%D1%82%D1%8B-74%20%D0%BF%D1%80%D0%BE%D0%B9%D0%B4%D0%B5%D0%BD%D0%BD%D1%8B%D1%85-3FB950?style=for-the-badge&logo=githubactions&logoColor=white)](#что-реально-проверено)
+[![Тесты](https://img.shields.io/badge/%D0%A2%D0%B5%D1%81%D1%82%D1%8B-76%20%D0%BF%D1%80%D0%BE%D0%B9%D0%B4%D0%B5%D0%BD%D0%BD%D1%8B%D1%85-3FB950?style=for-the-badge&logo=githubactions&logoColor=white)](#что-реально-проверено)
 [![Evgeny Gerber](https://img.shields.io/badge/Evgeny%20Gerber-2AABEE?style=for-the-badge&logo=telegram&logoColor=white)](https://ripcats.t.me)
 [![English](https://img.shields.io/badge/English-2D333B?style=for-the-badge&logo=libretranslate&logoColor=white)](README.en.md)
 
@@ -92,6 +92,8 @@ cargo check --manifest-path fuzz/Cargo.toml
 ~~~rust
 #[version(10)]
 
+// Message flags are part of the wire schema.
+
 #[flags(u16)]
 enum UserFlags {
     IsBot = 0,
@@ -136,6 +138,7 @@ struct Message {
 }
 
 struct Attachment {
+    /* Fixed-size identifiers are encoded without a length prefix. */
     name: String,
     connection_id: bytes[16],
     app_hash: Vec<u8> #[exact_len(32)],
@@ -158,6 +161,14 @@ struct Attachment {
 Фиксированные байты и ограничения длины задаются явно: `bytes[N]` кодируется как `[u8; N]` без length-prefix, а `Vec<u8> #[exact_len(N)]` проверяется при encode/decode. Для повторного использования можно объявить алиас: `type ConnectionId = bytes[16];`.
 
 `Vec<T>` может быть вложенным: `Vec<Vec<u8>>`, `Map<String, Vec<Message>>`. Ключ `Map<K, V>` должен быть primitive-типом, кроме `f32` и `f64`; пары кодируются в отсортированном порядке. Нарушение этого правила даёт semantic-validation error на этапе `parse_schema`, без паники.
+
+Комментарии в `.typ` работают как в Rust и полностью игнорируются:
+
+```rust
+// короткий комментарий
+/* многострочный
+   комментарий */
+```
 
 Для transport-level framing `Encoder` также предоставляет `write_vectored`: header, packet и trailer можно отправить через один vectored write без промежуточной конкатенации. API не привязан к TCP и подходит для TCP+TLS-адаптеров; QUIC, WebSocket и WebTransport могут использовать тот же готовый packet buffer и собственные message/frame boundaries.
 
@@ -307,7 +318,7 @@ Typikon — собственная schema-driven реализация бинар
 
 ## Что реально проверено
 
-Rust suite включает **74 теста: 68 unit и 6 integration** — parser и semantic validation, code generation, CLI, Layer/C-ID, wire round-trips, fixed byte arrays и exact-length checks, limits, malformed input, maps, VarInt, borrowed views, language-view generation, vectored writes, randomized inputs и round-trip сравнение с FlatBuffers.
+Rust suite включает **76 тестов: 70 unit и 6 integration** — parser и semantic validation, code generation, CLI, Layer/C-ID, wire round-trips, fixed byte arrays и exact-length checks, comments, limits, malformed input, maps, VarInt, borrowed views, language-view generation, vectored writes, randomized inputs и round-trip сравнение с FlatBuffers.
 
 Дополнительно проверяются Python/Go/TypeScript bindings, owner/aliasing, lazy iteration, duplicate/unsorted maps, cross-language round-trip и semantic parity с FlatBuffers (`cargo test --test flatbuffers_comparison`, `(cd bindings/typescript && npm test)`, `go test ./bindings/go`, `./tests/cross_language_roundtrip.sh`, `./tests/generated_go_views.sh`). Benchmarks: `cargo bench --bench wire` и `cargo bench --bench compare`; они измеряют wire size, encode/decode, borrowed views и allocations, но не являются сетевым benchmark. Длительная проверка запускается отдельно: `TYPIKON_STRESS_SECONDS=172800 ./tests/long_validation.sh`.
 

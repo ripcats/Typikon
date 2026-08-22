@@ -7,6 +7,7 @@ All notable changes to Typikon since its initial public beta are documented here
 ### Added
 
 - Added intuitive CLI help at global and command levels (`--help`/`-h`), plus `--version` and clearer usage errors.
+- Added explicit `generate backend`, `generate public`, and `generate all` commands; `compile` remains a compatibility alias for `generate all`.
 - Public `.typ` artifacts can now be recompiled using their original Layer-based artifact names without selecting language backends.
 - Public schema generation now supports `expanded` (default) and `compact` formats through the CLI.
 - Public schema artifacts now render structs in expanded form with `#[cid(...)]` directly above each struct; enum variant C-IDs remain inline.

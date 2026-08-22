@@ -3,7 +3,7 @@
 ![Typikon Protocol](assets/cover.png)
 
 [![Версия](https://img.shields.io/badge/%D0%92%D0%B5%D1%80%D1%81%D0%B8%D1%8F-Beta-5865F2?style=for-the-badge&logo=github&logoColor=white)](#что-реально-проверено)
-[![Тесты](https://img.shields.io/badge/%D0%A2%D0%B5%D1%81%D1%82%D1%8B-64%20%D0%BF%D1%80%D0%BE%D0%B9%D0%B4%D0%B5%D0%BD%D0%BD%D1%8B%D1%85-3FB950?style=for-the-badge&logo=githubactions&logoColor=white)](#что-реально-проверено)
+[![Тесты](https://img.shields.io/badge/%D0%A2%D0%B5%D1%81%D1%82%D1%8B-68%20%D0%BF%D1%80%D0%BE%D0%B9%D0%B4%D0%B5%D0%BD%D0%BD%D1%8B%D1%85-3FB950?style=for-the-badge&logo=githubactions&logoColor=white)](#что-реально-проверено)
 [![English](https://img.shields.io/badge/English-2D333B?style=for-the-badge&logo=libretranslate&logoColor=white)](README.en.md)
 [![Evgeny Gerber](https://img.shields.io/badge/Evgeny%20Gerber-2AABEE?style=for-the-badge&logo=telegram&logoColor=white)](https://ripcats.t.me)
 
@@ -52,19 +52,28 @@ cargo run -- check examples/messenger.typ
 # valid Layer 10: messenger.typ
 
 cargo run -- --help
-cargo run -- compile --help
+cargo run -- --version
+cargo run -- generate --help
 
-cargo run -- compile examples/messenger.typ \
+cargo run -- generate all examples/messenger.typ \
   --out-dir /tmp/typikon-messenger \
   --target python,golang,typescript
 
-# public.typ можно повторно скомпилировать без backend-адаптеров;
-# --target является опциональным
-cargo run -- compile examples/messenger-10.public.typ \
+# только backend-файлы
+cargo run -- generate backend examples/messenger.typ \
+  --out-dir /tmp/typikon-backend \
+  --target python,golang,typescript
+
+# только public.typ
+cargo run -- generate public examples/messenger.typ \
   --out-dir /tmp/typikon-public
 
+# public.typ можно повторно скомпилировать
+cargo run -- generate all examples/messenger-10.public.typ \
+  --out-dir /tmp/typikon-from-public
+
 # компактный public.typ при необходимости
-cargo run -- compile examples/messenger.typ \
+cargo run -- generate public examples/messenger.typ \
   --out-dir /tmp/typikon-public-compact \
   --public-format compact
 ~~~

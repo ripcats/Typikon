@@ -3,7 +3,7 @@
 ![Typikon Protocol](assets/cover.png)
 
 [![Version](https://img.shields.io/badge/Version-Beta-5865F2?style=for-the-badge&logo=github&logoColor=white)](#what-is-actually-tested)
-[![Tests](https://img.shields.io/badge/Tests-64%20Passing-3FB950?style=for-the-badge&logo=githubactions&logoColor=white)](#what-is-actually-tested)
+[![Tests](https://img.shields.io/badge/Tests-68%20Passing-3FB950?style=for-the-badge&logo=githubactions&logoColor=white)](#what-is-actually-tested)
 [![Русский](https://img.shields.io/badge/%D0%A0%D1%83%D1%81%D1%81%D0%BA%D0%B8%D0%B9-2D333B?style=for-the-badge&logo=libretranslate&logoColor=white)](README.md)
 [![Evgeny Gerber](https://img.shields.io/badge/Evgeny%20Gerber-2AABEE?style=for-the-badge&logo=telegram&logoColor=white)](https://ripcats.t.me)
 
@@ -52,19 +52,28 @@ cargo run -- check examples/messenger.typ
 # valid Layer 10: messenger.typ
 
 cargo run -- --help
-cargo run -- compile --help
+cargo run -- --version
+cargo run -- generate --help
 
-cargo run -- compile examples/messenger.typ \
+cargo run -- generate all examples/messenger.typ \
   --out-dir /tmp/typikon-messenger \
   --target python,golang,typescript
 
-# public.typ can be recompiled without backend adapters;
-# --target is optional
-cargo run -- compile examples/messenger-10.public.typ \
+# backend files only
+cargo run -- generate backend examples/messenger.typ \
+  --out-dir /tmp/typikon-backend \
+  --target python,golang,typescript
+
+# public.typ only
+cargo run -- generate public examples/messenger.typ \
   --out-dir /tmp/typikon-public
 
+# recompile a public.typ file
+cargo run -- generate all examples/messenger-10.public.typ \
+  --out-dir /tmp/typikon-from-public
+
 # compact public.typ when needed
-cargo run -- compile examples/messenger.typ \
+cargo run -- generate public examples/messenger.typ \
   --out-dir /tmp/typikon-public-compact \
   --public-format compact
 ~~~

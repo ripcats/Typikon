@@ -66,6 +66,13 @@ fn cli_help_is_available_at_global_and_command_levels() {
     assert!(String::from_utf8_lossy(&compile_help.stdout).contains("Generate Rust"));
     assert!(String::from_utf8_lossy(&compile_help.stdout).contains("--target"));
 
+    let generate_help = Command::new(&binary)
+        .args(["generate", "--help"])
+        .output()
+        .unwrap();
+    assert!(generate_help.status.success());
+    assert!(String::from_utf8_lossy(&generate_help.stdout).contains("KINDS:"));
+
     let trailing_help = Command::new(&binary)
         .args(["compile", "schema.typ", "--help"])
         .output()
@@ -113,6 +120,38 @@ fn cli_defaults_to_native_rust_only_and_selects_one_target() {
     assert!(python_dir.join("layer-8.ts").is_file());
     assert!(!python_dir.join("layer-8.go").exists());
     assert!(!python_dir.join("layer-8.h").exists());
+
+    let backend_dir = root.join("backend");
+    let backend = Command::new(&binary)
+        .args(["generate", "backend", schema.to_str().unwrap(), "--out-dir"])
+        .arg(&backend_dir)
+        .args(["--target", "python"])
+        .output()
+        .unwrap();
+    assert!(backend.status.success());
+    assert!(backend_dir.join("layer-8.rs").is_file());
+    assert!(backend_dir.join("layer_8.py").is_file());
+    assert!(!backend_dir.join("layer-8.public.typ").exists());
+
+    let public_dir = root.join("public");
+    let public = Command::new(&binary)
+        .args(["generate", "public", schema.to_str().unwrap(), "--out-dir"])
+        .arg(&public_dir)
+        .output()
+        .unwrap();
+    assert!(public.status.success());
+    assert!(public_dir.join("layer-8.public.typ").is_file());
+    assert!(!public_dir.join("layer-8.rs").exists());
+
+    let all_dir = root.join("all");
+    let all = Command::new(&binary)
+        .args(["generate", "all", schema.to_str().unwrap(), "--out-dir"])
+        .arg(&all_dir)
+        .output()
+        .unwrap();
+    assert!(all.status.success());
+    assert!(all_dir.join("layer-8.rs").is_file());
+    assert!(all_dir.join("layer-8.public.typ").is_file());
 
     let compact_dir = root.join("compact");
     let compact = Command::new(&binary)

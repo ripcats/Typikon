@@ -20,6 +20,6 @@ fn negotiate_layer(requested: u16, supported: Vec<u16>) -> PyResult<u16> {
 fn typikon_python(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(abi_version, module)?)?;
     module.add_function(wrap_pyfunction!(negotiate_layer, module)?)?;
-    register_typikon_python_10(module)?;
+    register_typikon_python(module)?;
     Ok(())
 }

@@ -1,4 +1,4 @@
-use crate::codegen::borrowed_view_name;
+use crate::codegen::{borrowed_view_name, fixed_byte_length};
 use crate::fingerprint::{constructor_cid, variant_cid};
 use crate::{Item, Schema, Type};
 
@@ -2169,22 +2169,41 @@ pub fn generate_bridge(schema: &Schema, native_file: &str, kind: BridgeKind) -> 
             let borrowed_name = borrowed_view_name(item, schema)
                 .map(|view| format!("{module}::{view}<'_>"))
                 .unwrap_or_else(|| native_name.clone());
-            let (encode_body, decode_body) = if matches!(item, Item::Flags(_)) {
+            let alias_fixed = match item {
+                Item::Alias(alias) => fixed_byte_length(&alias.ty, schema),
+                _ => None,
+            };
+            let (encode_prefix, encode_body, decode_body, decode_value) = if let Some(length) =
+                alias_fixed
+            {
                 (
+                    format!("let bytes: Vec<u8> = pythonize::depythonize(value).map_err(|error| PyValueError::new_err(error.to_string()))?; if bytes.len() != {length} {{ return Err(PyValueError::new_err(\"invalid fixed byte length\")); }} let value: [u8; {length}] = bytes.try_into().map_err(|_| PyValueError::new_err(\"invalid fixed byte length\"))?;"),
+                    "typikon::encode_value(&value).map_err(|error| PyValueError::new_err(format!(\"{error:?}\")))".to_owned(),
+                    format!("let value: {native_name} = typikon::decode_value(input).map_err(|error| PyValueError::new_err(format!(\"{{error:?}}\")))?;"),
+                    "&value.to_vec()".to_owned(),
+                )
+            } else if matches!(item, Item::Flags(_)) {
+                (
+                    format!("let value: {native_name} = pythonize::depythonize(value).map_err(|error| PyValueError::new_err(error.to_string()))?;"),
                     "let mut encoder = typikon::Encoder::new(typikon::DEFAULT_MAX_PACKET_SIZE); typikon::WireCodec::encode(&value, &mut encoder).map_err(|error| PyValueError::new_err(format!(\"{error:?}\")))?; encoder.finish().map_err(|error| PyValueError::new_err(format!(\"{error:?}\")))".to_owned(),
                     format!("let mut decoder = typikon::Decoder::new(input, typikon::DEFAULT_MAX_PACKET_SIZE).map_err(|error| PyValueError::new_err(format!(\"{{error:?}}\")))?; let value: {native_name} = typikon::WireCodec::decode(&mut decoder).map_err(|error| PyValueError::new_err(format!(\"{{error:?}}\")))?; if !decoder.is_finished() {{ return Err(PyValueError::new_err(\"trailing bytes\")); }}"),
+                    "&value".to_owned(),
                 )
             } else {
                 (
+                    format!("let value: {native_name} = pythonize::depythonize(value).map_err(|error| PyValueError::new_err(error.to_string()))?;"),
                     "typikon::TypikonCodec::encode(&value).map_err(|error| PyValueError::new_err(format!(\"{error:?}\")))".to_owned(),
                     format!("let value: {native_name} = typikon::TypikonCodec::decode(input).map_err(|error| PyValueError::new_err(format!(\"{{error:?}}\")))?;"),
+                    "&value".to_owned(),
                 )
             };
             output.push_str(&format!(
-                "#[pyfunction]\nfn encode_{function_name}(value: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {{ let value: {native_name} = pythonize::depythonize(value).map_err(|error| PyValueError::new_err(error.to_string()))?; {encode_body} }}\n#[pyfunction]\nfn decode_{function_name}(py: Python<'_>, input: &[u8]) -> PyResult<Py<PyAny>> {{ {decode_body} pythonize::pythonize(py, &value).map(|value| value.unbind()).map_err(|error| PyValueError::new_err(error.to_string())) }}\n#[pyfunction]\nfn validate_borrowed_{function_name}(input: &[u8]) -> PyResult<()> {{ typikon::decode_borrowed_value::<{borrowed_name}>(input).map(|_| ()).map_err(|error| PyValueError::new_err(format!(\"{{error:?}}\"))) }}\n"
+                "#[pyfunction]\nfn encode_{function_name}(value: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {{ {encode_prefix} {encode_body} }}\n#[pyfunction]\nfn decode_{function_name}(py: Python<'_>, input: &[u8]) -> PyResult<Py<PyAny>> {{ {decode_body} pythonize::pythonize(py, {decode_value}).map(|value| value.unbind()).map_err(|error| PyValueError::new_err(error.to_string())) }}\n#[pyfunction]\nfn validate_borrowed_{function_name}(input: &[u8]) -> PyResult<()> {{ typikon::decode_borrowed_value::<{borrowed_name}>(input).map(|_| ()).map_err(|error| PyValueError::new_err(format!(\"{{error:?}}\"))) }}\n"
             ));
         }
-        output.push_str(&format!("pub fn register_typikon_python_{layer}(module: &Bound<'_, PyModule>) -> PyResult<()> {{\n"));
+        output.push_str(
+            "pub fn register_typikon_python(module: &Bound<'_, PyModule>) -> PyResult<()> {\n",
+        );
         for item in &schema.items {
             let function_name = snake_case(item_name(item));
             output.push_str(&format!("    module.add_function(wrap_pyfunction!(encode_{function_name}, module)?)?;\n    module.add_function(wrap_pyfunction!(decode_{function_name}, module)?)?;\n    module.add_function(wrap_pyfunction!(validate_borrowed_{function_name}, module)?)?;\n"));
@@ -2329,6 +2348,10 @@ mod tests {
         assert!(typescript.contains("invalid exact byte length"));
         let python = generate_bridge(&schema, "packet-10.rs", BridgeKind::Python);
         assert!(python.contains("Packet"));
+        assert!(python.contains("register_typikon_python(module"));
+        let rust = crate::codegen::generate_rust(&schema);
+        assert!(rust.contains("__typikon_fixed_bytes_16"));
+        assert!(rust.contains("__typikon_fixed_bytes_16\")]"));
     }
 
     #[test]

@@ -95,6 +95,8 @@ enum Message {
 
 Every file starts with a required Layer, followed by flags, structs, and enums:
 
+The `#[version(...)]` value is stored as `u16` and supports the inclusive range `0` to `65,535`.
+
 ```rust
 #[version(10)]
 

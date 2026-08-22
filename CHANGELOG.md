@@ -6,6 +6,7 @@ All notable changes to Typikon since its initial public beta are documented here
 
 ### Added
 
+- Documented the `u16` Layer version range (`0..=65,535`) in both README files.
 - Guard bits are now derived automatically from guarded-field presence across the Rust, Go, TypeScript, and Python APIs during encoding.
 
 - Public `BorrowedWireCodec<'a>` and `decode_borrowed_value` APIs.

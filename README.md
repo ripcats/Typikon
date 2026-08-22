@@ -3,9 +3,9 @@
 ![Typikon Protocol](assets/cover.png)
 
 [![Версия](https://img.shields.io/badge/%D0%92%D0%B5%D1%80%D1%81%D0%B8%D1%8F-Beta-5865F2?style=for-the-badge&logo=github&logoColor=white)](#что-реально-проверено)
-[![Тесты](https://img.shields.io/badge/%D0%A2%D0%B5%D1%81%D1%82%D1%8B-68%20%D0%BF%D1%80%D0%BE%D0%B9%D0%B4%D0%B5%D0%BD%D0%BD%D1%8B%D1%85-3FB950?style=for-the-badge&logo=githubactions&logoColor=white)](#что-реально-проверено)
-[![English](https://img.shields.io/badge/English-2D333B?style=for-the-badge&logo=libretranslate&logoColor=white)](README.en.md)
+[![Тесты](https://img.shields.io/badge/%D0%A2%D0%B5%D1%81%D1%82%D1%8B-74%20%D0%BF%D1%80%D0%BE%D0%B9%D0%B4%D0%B5%D0%BD%D0%BD%D1%8B%D1%85-3FB950?style=for-the-badge&logo=githubactions&logoColor=white)](#что-реально-проверено)
 [![Evgeny Gerber](https://img.shields.io/badge/Evgeny%20Gerber-2AABEE?style=for-the-badge&logo=telegram&logoColor=white)](https://ripcats.t.me)
+[![English](https://img.shields.io/badge/English-2D333B?style=for-the-badge&logo=libretranslate&logoColor=white)](README.en.md)
 
 **Typikon — язык схем и компилятор для типизированного бинарного wire-протокола.**
 
@@ -137,6 +137,8 @@ struct Message {
 
 struct Attachment {
     name: String,
+    connection_id: bytes[16],
+    app_hash: Vec<u8> #[exact_len(32)],
     data: Vec<u8>,
 }
 ```
@@ -149,9 +151,11 @@ struct Attachment {
 | Беззнаковые числа | `u8`, `u16`, `u32`, `u64`, `u128` |
 | Знаковые числа | `i8`, `i16`, `i32`, `i64`, `i128` |
 | Числа с плавающей точкой | `f32`, `f64` |
-| Текст и байты | `String`, `Vec<u8>` |
+| Текст и байты | `String`, `Vec<u8>`, `bytes[N]` |
 | Коллекции | `Vec<T>`, `Map<K, V>` |
 | Пользовательские типы | имена `struct`, `enum` и flags |
+
+Фиксированные байты и ограничения длины задаются явно: `bytes[N]` кодируется как `[u8; N]` без length-prefix, а `Vec<u8> #[exact_len(N)]` проверяется при encode/decode. Для повторного использования можно объявить алиас: `type ConnectionId = bytes[16];`.
 
 `Vec<T>` может быть вложенным: `Vec<Vec<u8>>`, `Map<String, Vec<Message>>`. Ключ `Map<K, V>` должен быть primitive-типом, кроме `f32` и `f64`; пары кодируются в отсортированном порядке. Нарушение этого правила даёт semantic-validation error на этапе `parse_schema`, без паники.
 
@@ -252,7 +256,7 @@ Canonical form учитывает имя constructor’а, порядок пол
 [8 raw C-ID bytes][encoded fields]
 ~~~
 
-Артефакт `{name}-{layer}.public.typ` — read-only паспорт схемы с вычисленными `#[cid(...)]` и развёрнутым форматированием структур. Его можно повторно распарсить и сравнить с результатом компиляции.
+Артефакт `{name}-{layer}.public.typ` — read-only паспорт схемы с вычисленными `#[cid(...)]` и развёрнутым форматированием структур и data-bearing enum. Его можно повторно распарсить и сравнить с результатом компиляции.
 
 ## Demo: messenger
 
@@ -303,7 +307,7 @@ Typikon — собственная schema-driven реализация бинар
 
 ## Что реально проверено
 
-Rust suite включает **68 тестов: 62 unit и 6 integration** — parser и semantic validation, code generation, CLI, Layer/C-ID, wire round-trips, limits, malformed input, maps, VarInt, borrowed views, language-view generation, vectored writes, randomized inputs и round-trip сравнение с FlatBuffers.
+Rust suite включает **74 теста: 68 unit и 6 integration** — parser и semantic validation, code generation, CLI, Layer/C-ID, wire round-trips, fixed byte arrays и exact-length checks, limits, malformed input, maps, VarInt, borrowed views, language-view generation, vectored writes, randomized inputs и round-trip сравнение с FlatBuffers.
 
 Дополнительно проверяются Python/Go/TypeScript bindings, owner/aliasing, lazy iteration, duplicate/unsorted maps, cross-language round-trip и semantic parity с FlatBuffers (`cargo test --test flatbuffers_comparison`, `(cd bindings/typescript && npm test)`, `go test ./bindings/go`, `./tests/cross_language_roundtrip.sh`, `./tests/generated_go_views.sh`). Benchmarks: `cargo bench --bench wire` и `cargo bench --bench compare`; они измеряют wire size, encode/decode, borrowed views и allocations, но не являются сетевым benchmark. Длительная проверка запускается отдельно: `TYPIKON_STRESS_SECONDS=172800 ./tests/long_validation.sh`.
 

@@ -37,6 +37,22 @@ pub trait WireCodec: Sized {
     }
 }
 
+impl<const N: usize> WireCodec for [u8; N] {
+    const FIXED_ENCODED_LEN: Option<usize> = Some(N);
+
+    fn encode(&self, encoder: &mut Encoder) -> Result<(), WireError> {
+        encoder.fixed_bytes(self)
+    }
+
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, WireError> {
+        decoder.fixed_bytes()
+    }
+
+    fn encoded_len(&self) -> usize {
+        N
+    }
+}
+
 pub trait BorrowedWireCodec<'a>: Sized {
     fn decode_borrowed(decoder: &mut Decoder<'a>) -> Result<Self, WireError>;
 
@@ -290,6 +306,9 @@ impl Encoder {
     pub fn len(&self) -> usize {
         self.bytes.len()
     }
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
     pub fn write_vectored<W: Write>(
         &self,
         writer: &mut W,
@@ -414,6 +433,10 @@ impl Encoder {
     pub fn raw(&mut self, value: &[u8]) -> Result<(), WireError> {
         self.extend(value)
     }
+
+    pub fn fixed_bytes<const N: usize>(&mut self, value: &[u8; N]) -> Result<(), WireError> {
+        self.raw(value)
+    }
     fn push(&mut self, byte: u8) -> Result<(), WireError> {
         if self.bytes.len() >= self.max_size {
             return Err(WireError::PacketTooLarge);
@@ -455,9 +478,11 @@ pub struct Decoder<'a> {
 
 impl<'a> Decoder<'a> {
     pub fn new(bytes: &'a [u8], max_size: usize) -> Result<Self, WireError> {
-        let mut limits = DecodeLimits::default();
-        limits.max_packet_size = max_size;
-        limits.max_bytes_field_size = max_size;
+        let limits = DecodeLimits {
+            max_packet_size: max_size,
+            max_bytes_field_size: max_size,
+            ..DecodeLimits::default()
+        };
         Self::with_limits(bytes, limits)
     }
     pub fn with_limits(bytes: &'a [u8], limits: DecodeLimits) -> Result<Self, WireError> {
@@ -552,6 +577,18 @@ impl<'a> Decoder<'a> {
             return Err(WireError::PacketTooLarge);
         }
         self.read_slice(len)
+    }
+
+    pub fn fixed_bytes<const N: usize>(&mut self) -> Result<[u8; N], WireError> {
+        self.read_array()
+    }
+
+    pub fn fixed_bytes_borrowed<const N: usize>(&mut self) -> Result<&'a [u8], WireError> {
+        self.read_slice(N)
+    }
+
+    pub fn skip_fixed_bytes(&mut self, len: usize) -> Result<(), WireError> {
+        self.read_slice(len).map(|_| ())
     }
     pub fn skip_bytes(&mut self) -> Result<(), WireError> {
         let len = usize::try_from(self.varint()?).map_err(|_| WireError::IntegerOverflow)?;
@@ -831,6 +868,15 @@ impl<K: WireCodec + Ord, V: WireCodec> WireCodec for BTreeMap<K, V> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fixed_byte_arrays_round_trip_without_length_prefix() {
+        let value = [7u8; 16];
+        let encoded = crate::encode_value(&value).unwrap();
+        assert_eq!(encoded, vec![7; 16]);
+        assert_eq!(crate::decode_value::<[u8; 16]>(&encoded).unwrap(), value);
+        assert!(crate::decode_value::<[u8; 16]>(&encoded[..15]).is_err());
+    }
     use std::collections::BTreeMap;
     const LIMIT: usize = 1024;
 

@@ -1,4 +1,4 @@
-use crate::ast::{Enum, EnumVariant, Field, Flags, FlagsBit, Item, Schema, Struct, Type};
+use crate::ast::{Alias, Enum, EnumVariant, Field, Flags, FlagsBit, Item, Schema, Struct, Type};
 use crate::error::ParseError;
 use crate::limits::MAX_NESTING_DEPTH;
 
@@ -35,6 +35,13 @@ impl<'a> Parser<'a> {
 
     fn parse_item(&mut self) -> Result<Item, ParseError> {
         let cid = self.parse_cid_attr()?;
+        if self.consume("type") {
+            let name = self.identifier()?;
+            self.expect("=")?;
+            let ty = self.parse_type()?;
+            self.consume(";");
+            return Ok(Item::Alias(Alias { name, ty }));
+        }
         if self.consume("#[flags(") {
             let underlying = self.identifier()?;
             self.expect(")]")?;
@@ -47,7 +54,7 @@ impl<'a> Parser<'a> {
         if self.consume("enum") {
             return Ok(Item::Enum(self.parse_enum()?));
         }
-        self.error("expected `struct`, `enum` or `#[flags(...)] enum`")
+        self.error("expected `type`, `struct`, `enum` or `#[flags(...)] enum`")
     }
 
     fn parse_struct(&mut self, cid: Option<String>) -> Result<Struct, ParseError> {
@@ -76,7 +83,7 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
-            self.expect(",")?;
+            self.consume(",");
             variants.push(EnumVariant {
                 name: variant_name,
                 cid,
@@ -95,7 +102,7 @@ impl<'a> Parser<'a> {
             let name = self.identifier()?;
             self.expect("=")?;
             let value = self.number()?;
-            self.expect(",")?;
+            self.consume(",");
             bits.push(FlagsBit { name, value });
         }
         Ok(Flags {
@@ -120,7 +127,13 @@ impl<'a> Parser<'a> {
             let name = self.identifier()?;
             self.expect(":")?;
             let ty = self.parse_type()?;
-            fields.push(Field { name, guard, ty });
+            let exact_len = self.parse_exact_len_attr()?;
+            fields.push(Field {
+                name,
+                guard,
+                exact_len,
+                ty,
+            });
             if self.consume("}") {
                 break;
             }
@@ -139,6 +152,16 @@ impl<'a> Parser<'a> {
         }
         let name = self.identifier()?;
         match name.as_str() {
+            "bytes" => {
+                self.expect("[")?;
+                let length = self.number()?;
+                self.expect("]")?;
+                let length = usize::try_from(length).map_err(|_| ParseError {
+                    message: "fixed byte length does not fit usize".into(),
+                    position: self.position,
+                })?;
+                Ok(Type::FixedBytes(length))
+            }
             "Vec" => {
                 self.expect("<")?;
                 let t = self.parse_type_at(depth + 1)?;
@@ -190,6 +213,18 @@ impl<'a> Parser<'a> {
         let bit = self.identifier()?;
         self.expect(")]")?;
         Ok(Some(format!("{owner}.{bit}")))
+    }
+
+    fn parse_exact_len_attr(&mut self) -> Result<Option<usize>, ParseError> {
+        if !self.consume("#[exact_len(") {
+            return Ok(None);
+        }
+        let length = self.number()?;
+        self.expect(")]")?;
+        usize::try_from(length).map(Some).map_err(|_| ParseError {
+            message: "exact length does not fit usize".into(),
+            position: self.position,
+        })
     }
 
     fn identifier(&mut self) -> Result<String, ParseError> {

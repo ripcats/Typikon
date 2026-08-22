@@ -16,12 +16,22 @@ fn field_canonical(field: &Field) -> String {
         .as_deref()
         .map(|g| format!("[{}]", g.rsplit('.').next().unwrap_or(g)))
         .unwrap_or_default();
-    format!("{guard}{}:{}", field.name, type_canonical(&field.ty))
+    let exact_len = field
+        .exact_len
+        .map(|length| format!("{{exact_len={length}}}"))
+        .unwrap_or_default();
+    format!(
+        "{guard}{}:{}{}",
+        field.name,
+        type_canonical(&field.ty),
+        exact_len
+    )
 }
 
 fn type_canonical(ty: &Type) -> String {
     match ty {
         Type::Primitive(name) => name.clone(),
+        Type::FixedBytes(length) => format!("bytes[{length}]"),
         Type::Vec(item) => format!("Vec<{}>", type_canonical(item)),
         Type::Map(key, value) => format!("Map<{},{}>", type_canonical(key), type_canonical(value)),
     }

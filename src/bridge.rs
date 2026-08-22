@@ -28,6 +28,7 @@ pub fn generate_c_header(schema: &Schema) -> String {
     );
     for item in &schema.items {
         let name = match item {
+            Item::Alias(item) => &item.name,
             Item::Struct(item) => &item.name,
             Item::Enum(item) => &item.name,
             Item::Flags(item) => &item.name,
@@ -118,6 +119,16 @@ fn generate_go_item(item: &Item, schema: &Schema, output: &mut String) {
     let name = item_name(item);
     let function_name = snake_case(name);
     match item {
+        Item::Alias(alias) => {
+            output.push_str(&format!("type {name} = {};\n", go_type(&alias.ty, schema)));
+            let mut encode = String::new();
+            go_encode_go_type(&alias.ty, "v", schema, &mut encode);
+            let mut decode = String::new();
+            go_decode_go_type(&alias.ty, "v", schema, &mut decode, false);
+            output.push_str(&format!(
+                "func encode_{function_name}(e *wireEncoder,v {name}) {{{encode}}}\nfunc decode_{function_name}(d *wireDecoder) ({name},error) {{ var v {name}; var e error; {decode} return v,e }}\n"
+            ));
+        }
         Item::Flags(flags) => {
             output.push_str(&format!(
                 "type {name} {}\n",
@@ -164,6 +175,7 @@ fn generate_go_item(item: &Item, schema: &Schema, output: &mut String) {
 
 fn go_view_type(ty: &Type, schema: &Schema) -> String {
     match ty {
+        Type::FixedBytes(_) => "[]byte".into(),
         Type::Primitive(name) if name == "String" => "[]byte".into(),
         Type::Vec(_) if is_bytes_type(ty) => "[]byte".into(),
         Type::Primitive(name) if schema.items.iter().any(|i| item_name(i) == name) => {
@@ -193,6 +205,7 @@ fn go_named_view(name: &str, schema: &Schema) -> bool {
 
 fn generate_go_view_item(item: &Item, schema: &Schema, output: &mut String) {
     match item {
+        Item::Alias(_) => {}
         Item::Struct(st) => generate_go_view_struct(st, schema, output),
         Item::Enum(en) if !en.variants.iter().all(|v| v.fields.is_empty()) => {
             generate_go_view_enum(en, schema, output)
@@ -273,6 +286,7 @@ fn go_has_lazy_view(name: &str, schema: &Schema) -> bool {
 
 fn go_lazy_view_type(ty: &Type, schema: &Schema) -> String {
     match ty {
+        Type::FixedBytes(_) => "[]byte".into(),
         Type::Primitive(name)
             if schema.items.iter().any(|item| item_name(item) == name)
                 && go_has_lazy_view(name, schema) =>
@@ -290,6 +304,12 @@ fn go_lazy_view_type(ty: &Type, schema: &Schema) -> String {
 }
 
 fn go_decode_lazy_view_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut String) {
+    if let Type::FixedBytes(length) = ty {
+        out.push_str(&format!(
+            "{lhs},e=d.take({length});if e!=nil{{return v,e}};"
+        ));
+        return;
+    }
     if is_bytes_type(ty) || matches!(ty, Type::Primitive(name) if name == "String") {
         out.push_str(&format!("{lhs},e=d.bytes();if e!=nil{{return v,e}};"));
         return;
@@ -328,6 +348,7 @@ fn go_decode_lazy_view_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut Str
             go_decode_lazy_view_type(value, &format!("{lhs}[i].Value"), schema, out);
             out.push_str("}};");
         }
+        Type::FixedBytes(_) => unreachable!("fixed bytes handled above"),
     }
 }
 
@@ -354,15 +375,13 @@ fn generate_go_lazy_view_struct(item: &crate::Struct, schema: &Schema, output: &
             ),
             _ => unreachable!(),
         };
-        if matches!(field.ty, Type::Map(_, _)) {
-            if let Type::Map(key, value) = &field.ty {
-                output.push_str(&format!(
-                    "type {} struct{{ Key {}; Value {} }}\n",
-                    item_ty,
-                    go_lazy_view_type(key, schema),
-                    go_lazy_view_type(value, schema)
-                ));
-            }
+        if let Type::Map(key, value) = &field.ty {
+            output.push_str(&format!(
+                "type {} struct{{ Key {}; Value {} }}\n",
+                item_ty,
+                go_lazy_view_type(key, schema),
+                go_lazy_view_type(value, schema)
+            ));
         }
         output.push_str(&format!("type {collection_name} struct{{ wire []byte; start,count int }}\nfunc (v {collection_name}) Len() int {{ return v.count }}\n"));
         output.push_str(&format!(
@@ -610,6 +629,12 @@ fn generate_go_lazy_view_enum(item: &crate::Enum, schema: &Schema, output: &mut 
 }
 
 fn go_decode_view_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut String) {
+    if let Type::FixedBytes(length) = ty {
+        out.push_str(&format!(
+            "{lhs},e=d.take({length});if e!=nil{{return v,e}};"
+        ));
+        return;
+    }
     if is_bytes_type(ty) || matches!(ty, Type::Primitive(name) if name == "String") {
         out.push_str(&format!("{lhs},e=d.bytes();if e!=nil{{return v,e}};"));
         return;
@@ -656,6 +681,7 @@ fn go_decode_view_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut String) 
             go_decode_view_type(value, &format!("{lhs}[i].Value"), schema, out);
             out.push_str("}};");
         }
+        Type::FixedBytes(_) => unreachable!("fixed bytes handled above"),
     }
 }
 
@@ -712,6 +738,12 @@ fn generate_go_struct(item: &crate::Struct, schema: &Schema, output: &mut String
                 effective,
                 flag_value(item, bit)
             ));
+            if let Some(length) = field.exact_len {
+                output.push_str(&format!(
+                    "if len(*{})!={length}{{panic(\"invalid exact byte length\")}};",
+                    expr
+                ));
+            }
             go_encode_go_type(&field.ty, &format!("*{}", expr), schema, output);
             output.push_str("};");
         } else {
@@ -723,6 +755,11 @@ fn generate_go_struct(item: &crate::Struct, schema: &Schema, output: &mut String
             } else {
                 expr
             };
+            if let Some(length) = field.exact_len {
+                output.push_str(&format!(
+                    "if len({encode_expr})!={length}{{panic(\"invalid exact byte length\")}};"
+                ));
+            }
             go_encode_go_type(&field.ty, &encode_expr, schema, output);
         }
     }
@@ -736,10 +773,18 @@ fn generate_go_struct(item: &crate::Struct, schema: &Schema, output: &mut String
             let temporary = format!("guarded_{}", field.name);
             output.push_str(&format!("var {temporary} {};", go_type(&field.ty, schema)));
             go_decode_go_type(&field.ty, &temporary, schema, output, true);
+            if let Some(length) = field.exact_len {
+                output.push_str(&format!("if len({temporary})!={length}{{return v,fmt.Errorf(\"invalid exact byte length\")}};"));
+            }
             output.push_str(&format!("v.{}=&{};", pascal_case(&field.name), temporary));
             output.push_str("};");
         } else {
             go_decode_go_type(&field.ty, &lhs, schema, output, false);
+            if let Some(length) = field.exact_len {
+                output.push_str(&format!(
+                    "if len({lhs})!={length}{{return v,fmt.Errorf(\"invalid exact byte length\")}};"
+                ));
+            }
         }
     }
     output.push_str("return v,e}\n");
@@ -801,6 +846,12 @@ fn generate_go_enum(item: &crate::Enum, schema: &Schema, output: &mut String) {
         let cid = v.cid.clone().unwrap_or_else(|| variant_cid(item, v));
         output.push_str(&format!("case {vn}:e.raw([]byte{{{}}});", cid_bytes(&cid)));
         for f in &v.fields {
+            if let Some(length) = f.exact_len {
+                output.push_str(&format!(
+                    "if len(x.{})!={length}{{panic(\"invalid exact byte length\")}};",
+                    pascal_case(&f.name)
+                ));
+            }
             go_encode_go_type(
                 &f.ty,
                 &format!("x.{}", pascal_case(&f.name)),
@@ -819,13 +870,11 @@ fn generate_go_enum(item: &crate::Enum, schema: &Schema, output: &mut String) {
             cid_bytes(&cid)
         ));
         for f in &v.fields {
-            go_decode_go_type(
-                &f.ty,
-                &format!("x.{}", pascal_case(&f.name)),
-                schema,
-                output,
-                false,
-            );
+            let expr = format!("x.{}", pascal_case(&f.name));
+            go_decode_go_type(&f.ty, &expr, schema, output, false);
+            if let Some(length) = f.exact_len {
+                output.push_str(&format!("if len({expr})!={length}{{return nil,fmt.Errorf(\"invalid exact byte length\")}};"));
+            }
         }
         output.push_str("return x,e;");
     }
@@ -843,13 +892,11 @@ fn flag_value(item: &crate::Struct, bit: &str) -> u64 {
     item.fields
         .iter()
         .find(|f| f.name == "flags")
-        .and_then(|_| {
-            Some(match bit {
-                "is_bot" => 0,
-                "is_verified" => 1,
-                "has_avatar" => 2,
-                _ => 0,
-            })
+        .map(|_| match bit {
+            "is_bot" => 0,
+            "is_verified" => 1,
+            "has_avatar" => 2,
+            _ => 0,
         })
         .unwrap_or(0)
 }
@@ -871,13 +918,21 @@ fn go_wire_method(name: &str) -> &str {
     }
 }
 fn go_encode_go_type(ty: &Type, expr: &str, schema: &Schema, out: &mut String) {
+    if let Type::FixedBytes(length) = ty {
+        out.push_str(&format!(
+            "if len({expr})!={length}{{panic(\"invalid fixed bytes length\")}};e.raw({expr}[:]);"
+        ));
+        return;
+    }
     if is_bytes_type(ty) {
         out.push_str(&format!("e.bytes({expr});"));
         return;
     }
     match ty {
         Type::Primitive(n) => {
-            if schema.items.iter().any(|i| item_name(i) == n) {
+            if let Some(Item::Alias(alias)) = schema.items.iter().find(|i| item_name(i) == n) {
+                go_encode_go_type(&alias.ty, expr, schema, out);
+            } else if schema.items.iter().any(|i| item_name(i) == n) {
                 out.push_str(&format!("encode_{}(e,{expr});", snake_case(n)))
             } else {
                 out.push_str(&format!("e.{}({expr});", go_wire_method(n)))
@@ -896,17 +951,26 @@ fn go_encode_go_type(ty: &Type, expr: &str, schema: &Schema, out: &mut String) {
             go_encode_go_type(v, &format!("{expr}[k]"), schema, out);
             out.push_str("};")
         }
+        Type::FixedBytes(_) => unreachable!("fixed bytes handled above"),
     }
 }
 fn go_decode_go_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut String, guarded: bool) {
     let _ = guarded;
+    if let Type::FixedBytes(length) = ty {
+        out.push_str(&format!(
+            "tmp,e:=d.take({length});if e!=nil{{return v,e}};copy({lhs}[:],tmp);"
+        ));
+        return;
+    }
     if is_bytes_type(ty) {
         out.push_str(&format!("{lhs},e=d.bytes();if e!=nil{{return v,e}};"));
         return;
     }
     match ty {
         Type::Primitive(n) => {
-            if schema.items.iter().any(|i| item_name(i) == n) {
+            if let Some(Item::Alias(alias)) = schema.items.iter().find(|i| item_name(i) == n) {
+                go_decode_go_type(&alias.ty, lhs, schema, out, guarded);
+            } else if schema.items.iter().any(|i| item_name(i) == n) {
                 out.push_str(&format!(
                     "{lhs},e=decode_{}(d);if e!=nil{{return v,e}};",
                     snake_case(n)
@@ -928,6 +992,7 @@ fn go_decode_go_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut String, gu
             go_decode_go_type(v, &format!("{lhs}[k]"), schema, out, false);
             out.push_str("};};")
         }
+        Type::FixedBytes(_) => unreachable!("fixed bytes handled above"),
     }
 }
 
@@ -971,6 +1036,17 @@ pub fn generate_typescript_binding(schema: &Schema) -> String {
 
 fn generate_typescript_typed_item(item: &Item, schema: &Schema, output: &mut String) {
     match item {
+        Item::Alias(alias) => {
+            let name = &alias.name;
+            let lower = name.to_ascii_lowercase();
+            let mut encode = String::new();
+            typescript_encode_type(&alias.ty, "value", schema, &mut encode);
+            let mut decode = String::new();
+            typescript_decode_expression(&alias.ty, schema, &mut decode);
+            output.push_str(&format!(
+                "function write_{lower}(e: WireEncoder, value: {name}): void {{{encode}}}\nfunction read_{lower}(d: WireDecoder): {name} {{ return {decode}; }}\nexport function encode{name}(value: {name}): Uint8Array {{ const e = new WireEncoder(); write_{lower}(e, value); return e.finish(); }}\nexport function decode{name}(wire: Uint8Array): {name} {{ const d = new WireDecoder(wire); const value = read_{lower}(d); d.done(); return value; }}\n\n"
+            ));
+        }
         Item::Struct(st) => {
             let name = &st.name;
             let fn_name = name.to_ascii_lowercase();
@@ -993,6 +1069,12 @@ fn generate_typescript_typed_item(item: &Item, schema: &Schema, output: &mut Str
                         owner,
                         ts_guard_bit(schema, owner, bit)
                     ));
+                    if let Some(length) = field.exact_len {
+                        output.push_str(&format!(
+                            " if ({}!.length !== {}) throw new Error('invalid exact byte length');",
+                            expr, length
+                        ));
+                    }
                     typescript_encode_type(&field.ty, &format!("{}!", expr), schema, output);
                     output.push_str(" }");
                 } else {
@@ -1004,6 +1086,12 @@ fn generate_typescript_typed_item(item: &Item, schema: &Schema, output: &mut Str
                     } else {
                         expr
                     };
+                    if let Some(length) = field.exact_len {
+                        output.push_str(&format!(
+                            " if ({}.length !== {}) throw new Error('invalid exact byte length');",
+                            encode_expr, length
+                        ));
+                    }
                     typescript_encode_type(&field.ty, &encode_expr, schema, output);
                 }
             }
@@ -1019,9 +1107,21 @@ fn generate_typescript_typed_item(item: &Item, schema: &Schema, output: &mut Str
                         ts_guard_bit(schema, owner, bit)
                     ));
                     typescript_decode_type(&field.ty, &lhs, schema, output);
+                    if let Some(length) = field.exact_len {
+                        output.push_str(&format!(
+                            " if ({}.length !== {}) throw new Error('invalid exact byte length');",
+                            lhs, length
+                        ));
+                    }
                     output.push_str(" }");
                 } else {
                     typescript_decode_type(&field.ty, &lhs, schema, output);
+                    if let Some(length) = field.exact_len {
+                        output.push_str(&format!(
+                            " if ({}.length !== {}) throw new Error('invalid exact byte length');",
+                            lhs, length
+                        ));
+                    }
                 }
             }
             output.push_str(" return value; }\n");
@@ -1080,12 +1180,14 @@ fn generate_typescript_typed_item(item: &Item, schema: &Schema, output: &mut Str
                     variant.name, cid
                 ));
                 for field in &variant.fields {
-                    typescript_encode_type(
-                        &field.ty,
-                        &format!("value.{}.{}", variant.name, field.name),
-                        schema,
-                        output,
-                    );
+                    let expr = format!("value.{}.{}", variant.name, field.name);
+                    if let Some(length) = field.exact_len {
+                        output.push_str(&format!(
+                            " if ({}.length !== {}) throw new Error('invalid exact byte length');",
+                            expr, length
+                        ));
+                    }
+                    typescript_encode_type(&field.ty, &expr, schema, output);
                 }
                 output.push_str(" return; }");
             }
@@ -1104,7 +1206,13 @@ fn generate_typescript_typed_item(item: &Item, schema: &Schema, output: &mut Str
                 ));
                 for field in &variant.fields {
                     output.push_str(&format!(" {}: ", field.name));
-                    typescript_decode_expression(&field.ty, schema, output);
+                    let mut decoded = String::new();
+                    typescript_decode_expression(&field.ty, schema, &mut decoded);
+                    if let Some(length) = field.exact_len {
+                        output.push_str(&format!("(() => {{ const value = {decoded}; if (value.length !== {length}) throw new Error('invalid exact byte length'); return value; }})()"));
+                    } else {
+                        output.push_str(&decoded);
+                    }
                     output.push(',');
                 }
                 output.push_str(" } }; }");
@@ -1148,7 +1256,7 @@ fn ts_guard_bit(schema: &Schema, owner: &str, bit: &str) -> u64 {
                 None
             }
         })
-        .unwrap_or_else(|| match bit {
+        .unwrap_or(match bit {
             "is_bot" => 0,
             "is_verified" => 1,
             "has_avatar" => 2,
@@ -1156,13 +1264,22 @@ fn ts_guard_bit(schema: &Schema, owner: &str, bit: &str) -> u64 {
         })
 }
 fn typescript_encode_type(ty: &Type, expr: &str, schema: &Schema, out: &mut String) {
+    if let Type::FixedBytes(length) = ty {
+        out.push_str(&format!(
+            " if ({}.length !== {}) throw new Error('invalid fixed bytes length'); e.raw({});",
+            expr, length, expr
+        ));
+        return;
+    }
     if is_bytes_type(ty) {
         out.push_str(&format!(" e.bytes({});", expr));
         return;
     }
     match ty {
         Type::Primitive(n) => {
-            if schema.items.iter().any(|i| item_name(i) == n) {
+            if let Some(Item::Alias(alias)) = schema.items.iter().find(|i| item_name(i) == n) {
+                typescript_encode_type(&alias.ty, expr, schema, out);
+            } else if schema.items.iter().any(|i| item_name(i) == n) {
                 out.push_str(&format!(" write_{}(e, {});", n.to_ascii_lowercase(), expr));
             } else {
                 out.push_str(&format!(" e.{}({});", typescript_wire_method(n), expr));
@@ -1181,16 +1298,23 @@ fn typescript_encode_type(ty: &Type, expr: &str, schema: &Schema, out: &mut Stri
             typescript_encode_type(value, &format!("{}[key]", expr), schema, out);
             out.push_str(" }");
         }
+        Type::FixedBytes(_) => unreachable!("fixed bytes handled above"),
     }
 }
 fn typescript_decode_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut String) {
+    if let Type::FixedBytes(length) = ty {
+        out.push_str(&format!(" {} = d.take({});", lhs, length));
+        return;
+    }
     if is_bytes_type(ty) {
         out.push_str(&format!(" {} = d.bytes();", lhs));
         return;
     }
     match ty {
         Type::Primitive(n) => {
-            if schema.items.iter().any(|i| item_name(i) == n) {
+            if let Some(Item::Alias(alias)) = schema.items.iter().find(|i| item_name(i) == n) {
+                typescript_decode_type(&alias.ty, lhs, schema, out);
+            } else if schema.items.iter().any(|i| item_name(i) == n) {
                 out.push_str(&format!(" {} = read_{}(d);", lhs, n.to_ascii_lowercase()));
             } else {
                 out.push_str(&format!(" {} = d.{}();", lhs, typescript_wire_method(n)));
@@ -1212,9 +1336,14 @@ fn typescript_decode_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut Strin
             typescript_decode_type(value, &format!("{}[key]", lhs), schema, out);
             out.push_str(" }");
         }
+        Type::FixedBytes(_) => unreachable!("fixed bytes handled above"),
     }
 }
 fn typescript_decode_expression(ty: &Type, schema: &Schema, out: &mut String) {
+    if let Type::FixedBytes(length) = ty {
+        out.push_str(&format!("d.take({length})"));
+        return;
+    }
     if is_bytes_type(ty) {
         out.push_str("d.bytes()");
         return;
@@ -1237,11 +1366,13 @@ fn typescript_decode_expression(ty: &Type, schema: &Schema, out: &mut String) {
             typescript_decode_expression(value, schema, out);
             out.push_str("]; }))");
         }
+        Type::FixedBytes(_) => unreachable!("fixed bytes handled above"),
     }
 }
 
 fn typescript_view_type(ty: &Type, schema: &Schema) -> String {
     match ty {
+        Type::FixedBytes(_) => "Uint8Array".into(),
         Type::Primitive(name) if name == "String" => "Uint8Array".into(),
         Type::Primitive(name) if schema.items.iter().any(|i| item_name(i) == name) => {
             if typescript_named_view(name, schema) {
@@ -1357,6 +1488,10 @@ fn typescript_lazy_view_type(ty: &Type, schema: &Schema) -> String {
 }
 
 fn typescript_decode_lazy_expression(ty: &Type, schema: &Schema, out: &mut String) {
+    if let Type::FixedBytes(length) = ty {
+        out.push_str(&format!("d.take({length})"));
+        return;
+    }
     if is_bytes_type(ty) || matches!(ty, Type::Primitive(name) if name == "String") {
         out.push_str("d.bytes()");
         return;
@@ -1392,21 +1527,21 @@ fn typescript_decode_lazy_expression(ty: &Type, schema: &Schema, out: &mut Strin
             typescript_decode_lazy_expression(value, schema, out);
             out.push_str(" }))");
         }
+        Type::FixedBytes(_) => unreachable!("fixed bytes handled above"),
     }
 }
 
 fn typescript_decode_lazy_field_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut String) {
-    if let Type::Primitive(name) = ty {
-        if schema.items.iter().any(|item| item_name(item) == name)
-            && typescript_has_lazy_view(name, schema)
-        {
-            out.push_str(&format!(
-                " {} = read_{}_lazy_view(d, wire);",
-                lhs,
-                name.to_ascii_lowercase()
-            ));
-            return;
-        }
+    if let Type::Primitive(name) = ty
+        && schema.items.iter().any(|item| item_name(item) == name)
+        && typescript_has_lazy_view(name, schema)
+    {
+        out.push_str(&format!(
+            " {} = read_{}_lazy_view(d, wire);",
+            lhs,
+            name.to_ascii_lowercase()
+        ));
+        return;
     }
     typescript_decode_view_type(ty, lhs, schema, out);
 }
@@ -1724,10 +1859,15 @@ fn typescript_decode_view_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut 
                 key_type, lhs, key_expression, compare, value_expression
             ));
         }
+        Type::FixedBytes(_) => unreachable!("fixed bytes handled above"),
     }
 }
 
 fn typescript_decode_view_expression(ty: &Type, schema: &Schema, out: &mut String) {
+    if let Type::FixedBytes(length) = ty {
+        out.push_str(&format!("d.take({length})"));
+        return;
+    }
     if is_bytes_type(ty) || matches!(ty, Type::Primitive(name) if name == "String") {
         out.push_str("d.bytes()");
         return;
@@ -1754,6 +1894,7 @@ fn typescript_decode_view_expression(ty: &Type, schema: &Schema, out: &mut Strin
             typescript_decode_view_expression(value, schema, out);
             out.push_str(" }))");
         }
+        Type::FixedBytes(_) => unreachable!("fixed bytes handled above"),
     }
 }
 
@@ -1806,6 +1947,7 @@ pub fn generate_python_binding(schema: &Schema) -> String {
 
 fn item_name(item: &Item) -> &str {
     match item {
+        Item::Alias(item) => &item.name,
         Item::Struct(item) => &item.name,
         Item::Enum(item) => &item.name,
         Item::Flags(item) => &item.name,
@@ -1834,6 +1976,11 @@ fn go_primitive(name: &str) -> &str {
 
 fn typescript_item_type(item: &Item, schema: &Schema) -> String {
     match item {
+        Item::Alias(item) => format!(
+            "export type {} = {};",
+            item.name,
+            typescript_type(&item.ty, schema)
+        ),
         Item::Flags(item) => format!("export type {} = number;", item.name),
         Item::Enum(item)
             if item
@@ -1889,6 +2036,9 @@ fn pascal_case(name: &str) -> String {
 }
 
 fn go_type(ty: &Type, schema: &Schema) -> String {
+    if let Type::FixedBytes(length) = ty {
+        return format!("[{length}]byte");
+    }
     if is_bytes_type(ty) {
         return "[]byte".into();
     }
@@ -1913,10 +2063,14 @@ fn go_type(ty: &Type, schema: &Schema) -> String {
         },
         Type::Vec(item) => format!("[]{}", go_type(item, schema)),
         Type::Map(_, value) => format!("map[string]{}", go_type(value, schema)),
+        Type::FixedBytes(_) => unreachable!("fixed bytes handled above"),
     }
 }
 
 fn typescript_type(ty: &Type, schema: &Schema) -> String {
+    if let Type::FixedBytes(_) = ty {
+        return "Uint8Array".into();
+    }
     if is_bytes_type(ty) {
         return "Uint8Array".into();
     }
@@ -1931,6 +2085,7 @@ fn typescript_type(ty: &Type, schema: &Schema) -> String {
         },
         Type::Vec(item) => format!("Array<{}>", typescript_type(item, schema)),
         Type::Map(_, value) => format!("Record<string, {}>", typescript_type(value, schema)),
+        Type::FixedBytes(_) => unreachable!("fixed bytes handled above"),
     }
 }
 
@@ -1938,6 +2093,7 @@ fn is_bytes_type(ty: &Type) -> bool {
     matches!(ty, Type::Vec(item) if matches!(item.as_ref(), Type::Primitive(name) if name == "u8"))
 }
 
+#[allow(clippy::if_same_then_else)]
 pub fn generate_bridge(schema: &Schema, native_file: &str, kind: BridgeKind) -> String {
     let layer = schema.version;
     let module = native_file.trim_end_matches(".rs").replace(['-', '.'], "_");
@@ -1968,6 +2124,7 @@ pub fn generate_bridge(schema: &Schema, native_file: &str, kind: BridgeKind) -> 
     if !matches!(kind, BridgeKind::Python) {
         for item in &schema.items {
             let (name, is_flags) = match item {
+                Item::Alias(item) => (&item.name, false),
                 Item::Struct(item) => (&item.name, false),
                 Item::Enum(item) => (&item.name, false),
                 Item::Flags(item) => (&item.name, true),
@@ -2156,6 +2313,22 @@ mod tests {
         assert!(source.contains("Signed int32"));
         assert!(!source.contains(" Small u8"));
         assert!(!source.contains(" Id u64"));
+    }
+
+    #[test]
+    fn generated_backends_validate_fixed_and_exact_bytes() {
+        let schema = parse_schema(
+            "#[version(10)] type ConnectionId = bytes[16]; struct Packet { id: ConnectionId, hash: Vec<u8> #[exact_len(32)], }",
+        )
+        .unwrap();
+        let go = generate_go_binding(&schema, "packet-10.h");
+        assert!(go.contains("type ConnectionId = [16]byte"));
+        assert!(go.contains("invalid exact byte length"));
+        let typescript = generate_typescript_binding(&schema);
+        assert!(typescript.contains("export type ConnectionId = Uint8Array;"));
+        assert!(typescript.contains("invalid exact byte length"));
+        let python = generate_bridge(&schema, "packet-10.rs", BridgeKind::Python);
+        assert!(python.contains("Packet"));
     }
 
     #[test]

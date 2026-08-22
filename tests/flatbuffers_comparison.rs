@@ -252,7 +252,7 @@ fn typikon_and_flatbuffers_round_trip_the_same_model() {
     assert_eq!(typikon_decode(&typikon_wire).unwrap(), value);
     assert_eq!(flatbuffers_decode(&flatbuffers_wire).unwrap(), value);
     assert_ne!(typikon_wire, flatbuffers_wire);
-    assert!(typikon_wire.len() > 0 && flatbuffers_wire.len() > 0);
+    assert!(!typikon_wire.is_empty() && !flatbuffers_wire.is_empty());
     assert_eq!(
         typikon_borrowed_checksum(&typikon_wire).unwrap(),
         flatbuffers_view_checksum(&flatbuffers_wire).unwrap()

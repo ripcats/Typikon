@@ -6,9 +6,16 @@ pub struct Schema {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Item {
+    Alias(Alias),
     Struct(Struct),
     Enum(Enum),
     Flags(Flags),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Alias {
+    pub name: String,
+    pub ty: Type,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,12 +56,14 @@ pub struct FlagsBit {
 pub struct Field {
     pub name: String,
     pub guard: Option<String>,
+    pub exact_len: Option<usize>,
     pub ty: Type,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     Primitive(String),
+    FixedBytes(usize),
     Vec(Box<Type>),
     Map(Box<Type>, Box<Type>),
 }

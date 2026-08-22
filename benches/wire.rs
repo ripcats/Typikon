@@ -50,7 +50,7 @@ impl WireCodec for Message {
     }
 }
 
-fn decode_borrowed<'a>(wire: &'a [u8]) -> Result<(&'a str, &'a str), WireError> {
+fn decode_borrowed(wire: &[u8]) -> Result<(&str, &str), WireError> {
     let mut decoder = Decoder::new(wire, typikon::DEFAULT_MAX_PACKET_SIZE)?;
     decoder.expect_cid_bytes(&MESSAGE_CID)?;
     let _: u64 = decoder.value()?;

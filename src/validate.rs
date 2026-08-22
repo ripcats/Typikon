@@ -7,6 +7,7 @@ pub fn validate(schema: &Schema) -> Result<(), ParseError> {
     let mut names = HashSet::new();
     for item in &schema.items {
         let name = match item {
+            Item::Alias(x) => &x.name,
             Item::Struct(x) => &x.name,
             Item::Enum(x) => &x.name,
             Item::Flags(x) => &x.name,
@@ -17,6 +18,7 @@ pub fn validate(schema: &Schema) -> Result<(), ParseError> {
     }
     for item in &schema.items {
         match item {
+            Item::Alias(x) => validate_type(&x.ty, schema)?,
             Item::Struct(x) => {
                 validate_fields(&x.fields, schema)?;
                 if let Some(cid) = &x.cid
@@ -83,6 +85,12 @@ fn validate_fields(fields: &[Field], schema: &Schema) -> Result<(), ParseError> 
             return Err(error("duplicate field name"));
         }
         validate_type(&field.ty, schema)?;
+        if field.exact_len.is_some() && !is_bytes_vec(&field.ty) {
+            return Err(error("exact_len is only valid for Vec<u8>"));
+        }
+        if matches!(field.ty, Type::FixedBytes(_)) && field.exact_len.is_some() {
+            return Err(error("exact_len cannot be used with fixed bytes"));
+        }
         if let Some(guard) = &field.guard {
             let (owner, bit) = guard
                 .split_once('.')
@@ -123,6 +131,7 @@ fn validate_type(ty: &Type, schema: &Schema) -> Result<(), ParseError> {
         }
         Type::Primitive(name)
             if schema.items.iter().any(|item| match item {
+                Item::Alias(x) => &x.name == name,
                 Item::Struct(x) => &x.name == name,
                 Item::Enum(x) => &x.name == name,
                 Item::Flags(x) => &x.name == name,
@@ -131,6 +140,8 @@ fn validate_type(ty: &Type, schema: &Schema) -> Result<(), ParseError> {
             Ok(())
         }
         Type::Primitive(_) => Err(error("unknown type")),
+        Type::FixedBytes(length) if *length > 0 => Ok(()),
+        Type::FixedBytes(_) => Err(error("fixed byte length must be greater than zero")),
         Type::Vec(item) => validate_type(item, schema),
         Type::Map(key, value) => {
             if !matches!(key.as_ref(), Type::Primitive(name) if is_map_key_type(name)) {
@@ -140,6 +151,10 @@ fn validate_type(ty: &Type, schema: &Schema) -> Result<(), ParseError> {
             validate_type(value, schema)
         }
     }
+}
+
+fn is_bytes_vec(ty: &Type) -> bool {
+    matches!(ty, Type::Vec(item) if matches!(item.as_ref(), Type::Primitive(name) if name == "u8"))
 }
 
 fn is_primitive_name(name: &str) -> bool {

@@ -81,7 +81,7 @@ fn cli_help_is_available_at_global_and_command_levels() {
 
     let version = Command::new(&binary).arg("--version").output().unwrap();
     assert!(version.status.success());
-    assert!(String::from_utf8_lossy(&version.stdout).contains("typikon 0.2.0"));
+    assert!(String::from_utf8_lossy(&version.stdout).contains("typikon 0.3.1"));
 }
 
 #[test]

@@ -203,6 +203,29 @@ mod tests {
     }
 
     #[test]
+    fn parses_fixed_bytes_exact_lengths_and_aliases() {
+        let schema = parse_schema(
+            "#[version(1)] type ConnectionId = bytes[16]; struct Packet { id: ConnectionId, hash: Vec<u8> #[exact_len(32)], }",
+        )
+        .unwrap();
+        assert!(matches!(schema.items[0], Item::Alias(_)));
+        assert!(matches!(schema.items[1], Item::Struct(_)));
+        let Item::Struct(packet) = &schema.items[1] else {
+            unreachable!()
+        };
+        assert_eq!(packet.fields[0].ty, Type::Primitive("ConnectionId".into()));
+        assert_eq!(packet.fields[1].exact_len, Some(32));
+    }
+
+    #[test]
+    fn accepts_optional_trailing_commas_in_flags_and_enums() {
+        assert!(
+            parse_schema("#[version(1)] #[flags(u16)] enum F { Ready = 0 } enum E { Value = 0 }")
+                .is_ok()
+        );
+    }
+
+    #[test]
     fn enforces_type_nesting_limit() {
         for depth in [100, 101] {
             let mut ty = "u8".to_owned();

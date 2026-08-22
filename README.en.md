@@ -3,9 +3,9 @@
 ![Typikon Protocol](assets/cover.png)
 
 [![Version](https://img.shields.io/badge/Version-Beta-5865F2?style=for-the-badge&logo=github&logoColor=white)](#what-is-actually-tested)
-[![Tests](https://img.shields.io/badge/Tests-68%20Passing-3FB950?style=for-the-badge&logo=githubactions&logoColor=white)](#what-is-actually-tested)
-[![Русский](https://img.shields.io/badge/%D0%A0%D1%83%D1%81%D1%81%D0%BA%D0%B8%D0%B9-2D333B?style=for-the-badge&logo=libretranslate&logoColor=white)](README.md)
+[![Tests](https://img.shields.io/badge/Tests-74%20Passing-3FB950?style=for-the-badge&logo=githubactions&logoColor=white)](#what-is-actually-tested)
 [![Evgeny Gerber](https://img.shields.io/badge/Evgeny%20Gerber-2AABEE?style=for-the-badge&logo=telegram&logoColor=white)](https://ripcats.t.me)
+[![Русский](https://img.shields.io/badge/%D0%A0%D1%83%D1%81%D1%81%D0%BA%D0%B8%D0%B9-2D333B?style=for-the-badge&logo=libretranslate&logoColor=white)](README.md)
 
 **Typikon is a schema language and compiler for a typed binary wire protocol.**
 
@@ -42,7 +42,7 @@ Typikon is designed as a cross-platform protocol. The project currently provides
 | VarInt, collections, and maps | Compact and deterministic encoding |
 | Layer negotiation | Explicit schema compatibility checks |
 | Rust code generation | One implementation of encode/decode |
-| Language adapters | Python via PyO3, Go via cgo, TypeScript via Node-API |
+| Language adapters | Python via PyO3, direct native Go wire codec plus cgo validation, TypeScript typed wire codec plus Node-API validation |
 | Strict validation and limits | Predictable behavior on malformed input |
 
 ## Quick start
@@ -137,6 +137,8 @@ struct Message {
 
 struct Attachment {
     name: String,
+    connection_id: bytes[16],
+    app_hash: Vec<u8> #[exact_len(32)],
     data: Vec<u8>,
 }
 ```
@@ -149,9 +151,11 @@ Supported types:
 | Unsigned integers | `u8`, `u16`, `u32`, `u64`, `u128` |
 | Signed integers | `i8`, `i16`, `i32`, `i64`, `i128` |
 | Floating point | `f32`, `f64` |
-| Text and bytes | `String`, `Vec<u8>` |
+| Text and bytes | `String`, `Vec<u8>`, `bytes[N]` |
 | Collections | `Vec<T>`, `Map<K, V>` |
 | User-defined types | `struct`, `enum`, and flags names |
+
+Fixed bytes and length constraints are explicit: `bytes[N]` is encoded as `[u8; N]` without a length prefix, while `Vec<u8> #[exact_len(N)]` is checked during encode/decode. Reusable aliases use `type ConnectionId = bytes[16];`.
 
 `Vec<T>` can be nested: `Vec<Vec<u8>>`, `Map<String, Vec<Message>>`. A `Map<K, V>` key must be primitive, except `f32` and `f64`; pairs are encoded in sorted order. Violating this rule produces a semantic-validation error during `parse_schema`, never a parser panic.
 
@@ -252,7 +256,7 @@ The canonical form includes the constructor name, field order, types, and guard 
 [8 raw C-ID bytes][encoded fields]
 ~~~
 
-The compiler emits `{name}-{layer}.public.typ`, a read-only schema passport with computed `#[cid(...)]` values and expanded struct formatting. It can be parsed again and compared with the compiler output.
+The compiler emits `{name}-{layer}.public.typ`, a read-only schema passport with computed `#[cid(...)]` values and expanded formatting for structs and data-bearing enums. It can be parsed again and compared with the compiler output.
 
 ## Demo: messenger
 
@@ -278,8 +282,8 @@ messenger-10.ts              TypeScript facade
 The generated Rust core is the only schema-specific implementation of binary encode/decode. The shared runtime lives in [`src/wire.rs`](src/wire.rs), [`src/codec.rs`](src/codec.rs), [`src/constructor.rs`](src/constructor.rs), and related modules.
 
 - **Python** — an installable PyO3 package (`python -m pip install -e bindings/python`) with direct dict/list/scalar conversion through `pythonize`; packet ownership is available through `BorrowedPacket`.
-- **Go** — cgo over the generated C ownership/error ABI.
-- **TypeScript** — a Node-API native addon with a typed facade.
+- **Go** — a schema-specific native Go wire codec; cgo is used for the ABI and borrowed validation.
+- **TypeScript** — a typed direct wire codec and a Node-API native validation addon.
 
 All adapters use one wire contract. Go is generated as a direct native encoder/decoder with borrowed and lazy views, TypeScript as a typed wire codec with lazy views, `BorrowedPacket`, and native Node-API `borrowBinary`/`borrowTyped`, and Python through direct PyO3 conversion with an owner-backed packet `memoryview`. Python typed borrowed `str`/list/dict views are intentionally not promised because their lifetime and ownership are controlled by Python's object model.
 
@@ -303,7 +307,7 @@ Transport and application logic intentionally remain a separate layer. Typikon f
 
 ## What is actually tested
 
-The Rust suite contains **68 tests: 62 unit tests and 6 integration tests** covering parsing and semantic validation, code generation, the CLI, Layer/C-ID handling, wire round-trips, limits, malformed input, maps, VarInt, borrowed views, language-view generation, vectored writes, randomized inputs, and FlatBuffers round-trip comparison.
+The Rust suite contains **74 tests: 68 unit tests and 6 integration tests** covering parsing and semantic validation, code generation, the CLI, Layer/C-ID handling, wire round-trips, fixed byte arrays and exact-length checks, limits, malformed input, maps, VarInt, borrowed views, language-view generation, vectored writes, randomized inputs, and FlatBuffers round-trip comparison.
 
 Python/Go/TypeScript bindings, ownership/aliasing, lazy iteration, duplicate/unsorted maps, the cross-language round-trip, and semantic parity with FlatBuffers are also checked (`cargo test --test flatbuffers_comparison`, `(cd bindings/typescript && npm test)`, `go test ./bindings/go`, `./tests/cross_language_roundtrip.sh`, `./tests/generated_go_views.sh`). Benchmarks are available through `cargo bench --bench wire` and `cargo bench --bench compare`; they measure wire size, encoding/decoding, borrowed views, and allocations, but are not network benchmarks. Long-running validation is separate: `TYPIKON_STRESS_SECONDS=172800 ./tests/long_validation.sh`.
 

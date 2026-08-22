@@ -377,15 +377,14 @@ pub unsafe fn size_prefixed_root_as_collection_message_unchecked(buf: &[u8]) -> 
   flatbuffers::size_prefixed_root_unchecked::<CollectionMessage>(buf)
 }
 #[inline]
-pub fn finish_collection_message_buffer<'a, 'b>(
-    fbb: &'b mut flatbuffers::FlatBufferBuilder<'a>,
+pub fn finish_collection_message_buffer<'a>(
+    fbb: &mut flatbuffers::FlatBufferBuilder<'a>,
     root: flatbuffers::WIPOffset<CollectionMessage<'a>>) {
   fbb.finish(root, None);
 }
 
 #[inline]
-pub fn finish_size_prefixed_collection_message_buffer<'a, 'b>(fbb: &'b mut flatbuffers::FlatBufferBuilder<'a>, root: flatbuffers::WIPOffset<CollectionMessage<'a>>) {
+pub fn finish_size_prefixed_collection_message_buffer<'a>(fbb: &mut flatbuffers::FlatBufferBuilder<'a>, root: flatbuffers::WIPOffset<CollectionMessage<'a>>) {
   fbb.finish_size_prefixed(root, None);
 }
 }  // pub mod TypikonBench
-

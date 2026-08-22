@@ -31,6 +31,7 @@ pub fn is_backward_compatible(old: &Schema, new: &Schema) -> Result<(), Compatib
             }
             (Item::Enum(old), Item::Enum(new)) => check_enum(old, new)?,
             (Item::Flags(old), Item::Flags(new)) => check_flags(old, new)?,
+            (Item::Alias(old), Item::Alias(new)) if old.ty == new.ty => {}
             _ => return Err(CompatibilityError::ItemKindChanged { name }),
         }
     }
@@ -84,6 +85,7 @@ fn check_flags(old: &Flags, new: &Flags) -> Result<(), CompatibilityError> {
 
 fn item_name(item: &Item) -> String {
     match item {
+        Item::Alias(item) => item.name.clone(),
         Item::Struct(item) => item.name.clone(),
         Item::Enum(item) => item.name.clone(),
         Item::Flags(item) => item.name.clone(),
@@ -104,16 +106,18 @@ fn variant_signature(item: &EnumVariant) -> (Option<u64>, Option<String>, Vec<St
 
 fn field_signature(field: &Field) -> String {
     format!(
-        "{}:{}:{}",
+        "{}:{}:{}:{:?}",
         field.name,
         field.guard.as_deref().unwrap_or(""),
-        type_signature(&field.ty)
+        type_signature(&field.ty),
+        field.exact_len
     )
 }
 
 fn type_signature(ty: &Type) -> String {
     match ty {
         Type::Primitive(name) => name.clone(),
+        Type::FixedBytes(length) => format!("bytes[{length}]"),
         Type::Vec(item) => format!("Vec<{}>", type_signature(item)),
         Type::Map(key, value) => format!("Map<{},{}>", type_signature(key), type_signature(value)),
     }

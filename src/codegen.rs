@@ -148,6 +148,15 @@ fn generate_struct(item: &Struct, schema: &Schema, output: &mut String) {
         "        encoder.raw(&{}_CID_BYTES)?;\n",
         item.name.to_uppercase()
     ));
+    for (owner, owner_type, bit, fields) in guard_groups(item) {
+        let effective = format!("__typikon_effective_{owner}");
+        let present = fields
+            .iter()
+            .map(|field| format!("self.{field}.is_some()"))
+            .collect::<Vec<_>>()
+            .join(" || ");
+        output.push_str(&format!("        let mut {effective} = self.{owner}; if {present} {{ {effective}.0 |= {owner_type}::{bit}; }} else {{ {effective}.0 &= !{owner_type}::{bit}; }}\n"));
+    }
     for field in &item.fields {
         if let Some(guard) = &field.guard {
             let (owner, bit) = guard.split_once('.').unwrap_or(("flags", guard));
@@ -157,15 +166,24 @@ fn generate_struct(item: &Struct, schema: &Schema, output: &mut String) {
                 .find(|candidate| candidate.name == owner)
                 .map(|candidate| rust_type(&candidate.ty))
                 .unwrap_or_else(|| owner.to_owned());
+            let effective = format!("__typikon_effective_{owner}");
             if is_byte_vec(&field.ty) {
-                output.push_str(&format!("        if self.{owner}.contains({owner_type}::{}) {{ encoder.bytes(self.{}.as_ref().ok_or(typikon::WireError::MalformedConstructor)?)?; }}\n", const_name(bit), field.name));
+                output.push_str(&format!("        if {effective}.contains({owner_type}::{}) {{ encoder.bytes(self.{}.as_ref().ok_or(typikon::WireError::MalformedConstructor)?)?; }}\n", const_name(bit), field.name));
             } else {
-                output.push_str(&format!("        if self.{owner}.contains({owner_type}::{}) {{ self.{}.as_ref().ok_or(typikon::WireError::MalformedConstructor)?.encode(encoder)?; }}\n", const_name(bit), field.name));
+                output.push_str(&format!("        if {effective}.contains({owner_type}::{}) {{ self.{}.as_ref().ok_or(typikon::WireError::MalformedConstructor)?.encode(encoder)?; }}\n", const_name(bit), field.name));
             }
         } else if is_byte_vec(&field.ty) {
             output.push_str(&format!("        encoder.bytes(&self.{})?;\n", field.name));
         } else {
-            output.push_str(&format!("        self.{}.encode(encoder)?;\n", field.name));
+            let owner_has_guards = guard_groups(item)
+                .iter()
+                .any(|(owner, _, _, _)| owner == &field.name);
+            let expr = if owner_has_guards {
+                format!("__typikon_effective_{}", field.name)
+            } else {
+                format!("self.{}", field.name)
+            };
+            output.push_str(&format!("        {expr}.encode(encoder)?;\n"));
         }
     }
     output.push_str("        Ok(())\n    }\n    fn decode(decoder: &mut typikon::Decoder<'_>) -> Result<Self, typikon::WireError> {\n");
@@ -212,6 +230,15 @@ fn generate_struct(item: &Struct, schema: &Schema, output: &mut String) {
             .join(", "),
     );
     output.push_str(" })\n    }\n    fn encoded_len(&self) -> usize {\n        let mut size = typikon::CID_BYTES;\n");
+    for (owner, owner_type, bit, fields) in guard_groups(item) {
+        let effective = format!("__typikon_effective_{owner}");
+        let present = fields
+            .iter()
+            .map(|field| format!("self.{field}.is_some()"))
+            .collect::<Vec<_>>()
+            .join(" || ");
+        output.push_str(&format!("        let mut {effective} = self.{owner}; if {present} {{ {effective}.0 |= {owner_type}::{bit}; }} else {{ {effective}.0 &= !{owner_type}::{bit}; }}\n"));
+    }
     for field in &item.fields {
         if let Some(guard) = &field.guard {
             let (owner, bit) = guard.split_once('.').unwrap_or(("flags", guard));
@@ -221,10 +248,11 @@ fn generate_struct(item: &Struct, schema: &Schema, output: &mut String) {
                 .find(|candidate| candidate.name == owner)
                 .map(|candidate| rust_type(&candidate.ty))
                 .unwrap_or_else(|| owner.to_owned());
+            let effective = format!("__typikon_effective_{owner}");
             if is_byte_vec(&field.ty) {
-                output.push_str(&format!("        if self.{owner}.contains({owner_type}::{}) {{ if let Some(value) = &self.{} {{ size = size.saturating_add(typikon::varint_len(value.len() as u64)).saturating_add(value.len()); }} }}\n", const_name(bit), field.name));
+                output.push_str(&format!("        if {effective}.contains({owner_type}::{}) {{ if let Some(value) = &self.{} {{ size = size.saturating_add(typikon::varint_len(value.len() as u64)).saturating_add(value.len()); }} }}\n", const_name(bit), field.name));
             } else {
-                output.push_str(&format!("        if self.{owner}.contains({owner_type}::{}) {{ if let Some(value) = &self.{} {{ size = size.saturating_add(typikon::WireCodec::encoded_len(value)); }} }}\n", const_name(bit), field.name));
+                output.push_str(&format!("        if {effective}.contains({owner_type}::{}) {{ if let Some(value) = &self.{} {{ size = size.saturating_add(typikon::WireCodec::encoded_len(value)); }} }}\n", const_name(bit), field.name));
             }
         } else if is_byte_vec(&field.ty) {
             output.push_str(&format!("        size = size.saturating_add(typikon::varint_len(self.{}.len() as u64)).saturating_add(self.{}.len());\n", field.name, field.name));
@@ -237,6 +265,30 @@ fn generate_struct(item: &Struct, schema: &Schema, output: &mut String) {
     }
     output.push_str("        size\n    }\n}\n");
     generate_borrowed_struct(item, schema, output);
+}
+
+fn guard_groups(item: &Struct) -> Vec<(String, String, String, Vec<String>)> {
+    let mut groups: Vec<(String, String, String, Vec<String>)> = Vec::new();
+    for field in &item.fields {
+        let Some(guard) = &field.guard else { continue };
+        let (owner, bit) = guard.split_once('.').unwrap_or(("flags", guard));
+        let owner_type = item
+            .fields
+            .iter()
+            .find(|candidate| candidate.name == owner)
+            .map(|candidate| rust_type(&candidate.ty))
+            .unwrap_or_else(|| owner.to_owned());
+        let bit = const_name(bit);
+        if let Some(group) = groups
+            .iter_mut()
+            .find(|group| group.0 == owner && group.2 == bit)
+        {
+            group.3.push(field.name.clone());
+        } else {
+            groups.push((owner.to_owned(), owner_type, bit, vec![field.name.clone()]));
+        }
+    }
+    groups
 }
 
 fn generate_borrowed_struct(item: &Struct, schema: &Schema, output: &mut String) {
@@ -838,6 +890,25 @@ mod tests {
         assert!(generated.contains("pub data: &'a [u8]"));
         assert!(generated.contains("decoder.string_borrowed()?"));
         assert!(generated.contains("decoder.bytes_borrowed()?"));
+    }
+
+    #[test]
+    fn guard_bits_follow_option_presence_during_encode_and_length() {
+        let schema = parse_schema(
+            "#[version(1)] #[flags(u16)] enum Flags { HasAvatar = 2, } struct User { flags: Flags, #[guard(flags.has_avatar)] avatar: String, }",
+        )
+        .unwrap();
+        let generated = generate_rust(&schema);
+        assert!(generated.contains(
+            "if self.avatar.is_some() { __typikon_effective_flags.0 |= Flags::HAS_AVATAR; }"
+        ));
+        assert!(generated.contains("if __typikon_effective_flags.contains(Flags::HAS_AVATAR)"));
+        assert!(
+            generated
+                .matches("let mut __typikon_effective_flags")
+                .count()
+                >= 2
+        );
     }
 
     #[test]

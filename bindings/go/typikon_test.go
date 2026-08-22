@@ -55,6 +55,26 @@ func TestUserDecodeRejectsInvalidWire(t *testing.T) {
 	}
 }
 
+func TestUserGuardBitTracksAvatarPresence(t *testing.T) {
+	avatar := "https://example.test/avatar"
+	wire, err := EncodeUser(User{Id: 7, Username: "ada", DisplayName: "Ada", Flags: 0, AvatarUrl: &avatar, Presence: Presence("Online"), Roles: []string{}})
+	if err != nil {
+		t.Fatalf("EncodeUser with avatar: %v", err)
+	}
+	got, err := DecodeUser(wire)
+	if err != nil || got.AvatarUrl == nil || got.Flags&(1<<2) == 0 {
+		t.Fatalf("guard bit was not set from avatar presence: %#v, %v", got, err)
+	}
+	wire, err = EncodeUser(User{Id: 7, Username: "ada", DisplayName: "Ada", Flags: 1 << 2, Presence: Presence("Online"), Roles: []string{}})
+	if err != nil {
+		t.Fatalf("EncodeUser without avatar: %v", err)
+	}
+	got, err = DecodeUser(wire)
+	if err != nil || got.AvatarUrl != nil || got.Flags&(1<<2) != 0 {
+		t.Fatalf("guard bit was not cleared without avatar: %#v, %v", got, err)
+	}
+}
+
 func TestUserBorrowedValidation(t *testing.T) {
 	want := User{Id: 7, Username: "ada", DisplayName: "Ada", Presence: Presence("Online"), Roles: []string{}}
 	wire, err := EncodeUser(want)

@@ -6,6 +6,8 @@ All notable changes to Typikon since its initial public beta are documented here
 
 ### Added
 
+- Guard bits are now derived automatically from guarded-field presence across the Rust, Go, TypeScript, and Python APIs during encoding.
+
 - Public `BorrowedWireCodec<'a>` and `decode_borrowed_value` APIs.
 - Generated `TypeRef<'a>` Rust views for zero-copy decoding of direct `String` and `Vec<u8>` fields.
 - Borrowed views now propagate through direct named-struct fields, so nested `UserRef<'a>` values keep pointing into the original packet.

@@ -267,11 +267,17 @@ var UserCID = []byte{0xac, 0xb3, 0x8d, 0xa6, 0x7a, 0x71, 0x20, 0x58}
 
 func encode_user(e *wireEncoder, v User) {
 	e.raw(UserCID)
+	effectiveFlags := v.Flags
+	if v.AvatarUrl != nil {
+		effectiveFlags |= UserFlags(1 << 2)
+	} else {
+		effectiveFlags &^= UserFlags(1 << 2)
+	}
 	e.u64(v.Id)
 	e.string(v.Username)
 	e.string(v.DisplayName)
-	encode_user_flags(e, v.Flags)
-	if v.Flags&(1<<2) != 0 {
+	encode_user_flags(e, effectiveFlags)
+	if effectiveFlags&(1<<2) != 0 {
 		e.string(*v.AvatarUrl)
 	}
 	encode_presence(e, v.Presence)

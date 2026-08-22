@@ -682,15 +682,48 @@ fn generate_go_struct(item: &crate::Struct, schema: &Schema, output: &mut String
         name,
         name
     ));
+    for (owner, owner_type, bit, fields) in go_guard_groups(item, schema) {
+        let effective = format!("__typikon_effective_{}", pascal_case(&owner));
+        let present = fields
+            .iter()
+            .map(|field| format!("v.{}!=nil", pascal_case(field)))
+            .collect::<Vec<_>>()
+            .join("||");
+        output.push_str(&format!(
+            "{}:=v.{};if {}{{{}|={}(1<<{})}}else{{{}&^={}(1<<{})}};",
+            effective,
+            pascal_case(&owner),
+            present,
+            effective,
+            owner_type,
+            bit,
+            effective,
+            owner_type,
+            bit
+        ));
+    }
     for field in &item.fields {
         let expr = format!("v.{}", pascal_case(&field.name));
         if let Some(guard) = &field.guard {
-            let (_, bit) = guard.split_once('.').unwrap_or(("flags", guard));
-            output.push_str(&format!("if v.Flags&(1<<{})!=0{{", flag_value(item, bit)));
+            let (owner, bit) = guard.split_once('.').unwrap_or(("flags", guard));
+            let effective = format!("__typikon_effective_{}", pascal_case(owner));
+            output.push_str(&format!(
+                "if {}&(1<<{})!=0{{",
+                effective,
+                flag_value(item, bit)
+            ));
             go_encode_go_type(&field.ty, &format!("*{}", expr), schema, output);
             output.push_str("};");
         } else {
-            go_encode_go_type(&field.ty, &expr, schema, output);
+            let effective = go_guard_groups(item, schema)
+                .iter()
+                .any(|(owner, _, _, _)| owner == &field.name);
+            let encode_expr = if effective {
+                format!("__typikon_effective_{}", pascal_case(&field.name))
+            } else {
+                expr
+            };
+            go_encode_go_type(&field.ty, &encode_expr, schema, output);
         }
     }
     output.push_str("}\n");
@@ -710,6 +743,38 @@ fn generate_go_struct(item: &crate::Struct, schema: &Schema, output: &mut String
         }
     }
     output.push_str("return v,e}\n");
+}
+
+fn go_guard_groups(
+    item: &crate::Struct,
+    schema: &Schema,
+) -> Vec<(String, String, u64, Vec<String>)> {
+    let mut groups: Vec<(String, String, u64, Vec<String>)> = Vec::new();
+    for field in &item.fields {
+        let Some(guard) = &field.guard else { continue };
+        let (owner, bit) = guard.split_once('.').unwrap_or(("flags", guard));
+        let bit_value = flag_value(item, bit);
+        let owner_type = item
+            .fields
+            .iter()
+            .find(|candidate| candidate.name == owner)
+            .map(|candidate| go_type(&candidate.ty, schema))
+            .unwrap_or_else(|| owner.to_owned());
+        if let Some(group) = groups
+            .iter_mut()
+            .find(|group| group.0 == owner && group.2 == bit_value)
+        {
+            group.3.push(field.name.clone());
+        } else {
+            groups.push((
+                owner.to_owned(),
+                owner_type,
+                bit_value,
+                vec![field.name.clone()],
+            ));
+        }
+    }
+    groups
 }
 
 fn generate_go_enum(item: &crate::Enum, schema: &Schema, output: &mut String) {
@@ -911,19 +976,35 @@ fn generate_typescript_typed_item(item: &Item, schema: &Schema, output: &mut Str
             let fn_name = name.to_ascii_lowercase();
             let cid = st.cid.clone().unwrap_or_else(|| constructor_cid(st));
             output.push_str(&format!("const {name}CID = hex(\"{cid}\");\nfunction write_{fn_name}(e: WireEncoder, value: {name}): void {{ e.raw({name}CID);"));
+            for (owner, bit, fields) in ts_guard_groups(st, schema) {
+                let present = fields
+                    .iter()
+                    .map(|field| format!("value.{} !== undefined", field))
+                    .collect::<Vec<_>>()
+                    .join(" || ");
+                output.push_str(&format!(" let effective_{} = value.{}; if ({present}) effective_{} |= (1 << {}); else effective_{} &= ~(1 << {});", owner, owner, owner, bit, owner, bit));
+            }
             for field in &st.fields {
                 let expr = format!("value.{}", field.name);
                 if let Some(guard) = &field.guard {
                     let (owner, bit) = guard.split_once('.').unwrap_or(("flags", guard));
                     output.push_str(&format!(
-                        " if ((value.{} & (1 << {})) !== 0) {{",
+                        " if ((effective_{} & (1 << {})) !== 0) {{",
                         owner,
                         ts_guard_bit(schema, owner, bit)
                     ));
                     typescript_encode_type(&field.ty, &format!("{}!", expr), schema, output);
                     output.push_str(" }");
                 } else {
-                    typescript_encode_type(&field.ty, &expr, schema, output);
+                    let encode_expr = if ts_guard_groups(st, schema)
+                        .iter()
+                        .any(|(owner, _, _)| owner == &field.name)
+                    {
+                        format!("effective_{}", field.name)
+                    } else {
+                        expr
+                    };
+                    typescript_encode_type(&field.ty, &encode_expr, schema, output);
                 }
             }
             output.push_str(" }\n");
@@ -1178,6 +1259,24 @@ fn typescript_view_type(ty: &Type, schema: &Schema) -> String {
         ),
         Type::Primitive(name) => typescript_type(&Type::Primitive(name.clone()), schema),
     }
+}
+
+fn ts_guard_groups(item: &crate::Struct, schema: &Schema) -> Vec<(String, u64, Vec<String>)> {
+    let mut groups: Vec<(String, u64, Vec<String>)> = Vec::new();
+    for field in &item.fields {
+        let Some(guard) = &field.guard else { continue };
+        let (owner, bit) = guard.split_once('.').unwrap_or(("flags", guard));
+        let bit_value = ts_guard_bit(schema, owner, bit);
+        if let Some(group) = groups
+            .iter_mut()
+            .find(|group| group.0 == owner && group.1 == bit_value)
+        {
+            group.2.push(field.name.clone());
+        } else {
+            groups.push((owner.to_owned(), bit_value, vec![field.name.clone()]));
+        }
+    }
+    groups
 }
 
 fn generate_typescript_view_struct(item: &crate::Struct, schema: &Schema, output: &mut String) {
@@ -2089,6 +2188,22 @@ mod tests {
         assert!(go.contains("BatchItemsValuesLazyView"));
         assert!(go.contains("BatchItemsEntriesEntry"));
         assert!(go.contains("entry.Key)>=0"));
+    }
+
+    #[test]
+    fn generated_backends_derive_guard_bits_from_field_presence() {
+        let schema = parse_schema(
+            "#[version(10)] #[flags(u16)] enum Flags { HasAvatar = 2, } struct User { flags: Flags, #[guard(flags.has_avatar)] avatar: String, }",
+        )
+        .unwrap();
+        let go = generate_go_binding(&schema, "chat-10.h");
+        assert!(go.contains("__typikon_effective_Flags:=v.Flags"));
+        assert!(go.contains("v.Avatar!=nil"));
+        assert!(go.contains("encode_flags(e,__typikon_effective_Flags)"));
+        let typescript = generate_typescript_binding(&schema);
+        assert!(typescript.contains("let effective_flags = value.flags"));
+        assert!(typescript.contains("value.avatar !== undefined"));
+        assert!(typescript.contains("write_flags(e, effective_flags)"));
     }
 
     #[test]

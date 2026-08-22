@@ -170,6 +170,8 @@ On the wire, a guard works as follows:
 
 The flags field must therefore appear before every field that depends on it. In generated Rust, guarded fields are `Option<T>`: `Some(value)` when the bit is set and `None` otherwise. Flags are not constructors and do not receive a Constructor ID.
 
+During encoding, guarded-field presence is the source of truth: Rust, Go, TypeScript, and Python generators automatically set the linked bit for a present value and clear it when the value is absent. Callers do not need to synchronize `flags` manually; during decoding, the wire bit still determines whether the field is read.
+
 Optionality is always explicit in Typikon; the schema has no separate `Option<T>` or `nullable<T>` syntax.
 
 ### Structs, enums, and unit enums

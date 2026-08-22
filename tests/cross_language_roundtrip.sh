@@ -18,6 +18,8 @@ mkdir -p "$temp_dir/generated-js"
 ln -s "$repo_dir/bindings/python/target/debug/libtypikon_python.so" "$temp_dir/typikon_python.so"
 python_wire="$(TYPIKON_VALUE="$json" PYTHONPATH="$temp_dir" python3 -c 'import json, os, typikon_python; print(typikon_python.encode_user(json.loads(os.environ["TYPIKON_VALUE"])).hex())')"
 test "$python_wire" = "$expected"
+python_guard_bit="$(TYPIKON_VALUE='{"id":7,"username":"ada","display_name":"Ada","flags":0,"avatar_url":"x","presence":"Online","roles":[]}' PYTHONPATH="$temp_dir" python3 -c 'import json, os, typikon_python; wire = typikon_python.encode_user(json.loads(os.environ["TYPIKON_VALUE"])); print(typikon_python.decode_user(wire)["flags"])')"
+test "$python_guard_bit" = "4"
 PYTHONPATH="$temp_dir/generated:$temp_dir" python3 - <<'PY'
 import messenger_10
 
@@ -38,6 +40,10 @@ JS
 test "$typed_node_wire" = "$expected"
 node - "$temp_dir/generated-js/messenger-10.js" <<'JS'
 const m = require(process.argv[2]);
+const guarded = m.decodeUser(m.encodeUser({id: 7, username: "ada", display_name: "Ada", flags: 0, avatar_url: "x", presence: "Online", roles: []}));
+if (guarded.flags !== 4 || guarded.avatar_url !== "x") process.exit(1);
+const cleared = m.decodeUser(m.encodeUser({id: 7, username: "ada", display_name: "Ada", flags: 4, presence: "Online", roles: []}));
+if (cleared.flags !== 0 || cleared.avatar_url !== undefined) process.exit(1);
 const wire = m.encodeUser({id: 7, username: "ada", display_name: "Ada", flags: 0, presence: "Online", roles: ["admin"]});
 const view = m.decodeUserView(wire);
 if (!(view.username instanceof Uint8Array) || new TextDecoder().decode(view.username) !== "ada") process.exit(1);

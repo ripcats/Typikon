@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
     process::ExitCode,
 };
-use typikon::compile_schema;
+use typikon::{PublicSchemaFormat, compile_schema_with_format};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Target {
@@ -51,8 +51,16 @@ fn add_targets(value: &str, targets: &mut Vec<Target>) -> Result<(), String> {
 
 fn usage() {
     eprintln!(
-        "Usage:\n  typikon check <schema.typ>\n  typikon compile <schema.typ> [--out-dir <directory>] [--target python,golang,typescript]"
+        "Usage:\n  typikon check <schema.typ>\n  typikon compile <schema.typ> [--out-dir <directory>] [--target python,golang,typescript] [--public-format expanded|compact]"
     );
+}
+
+fn parse_public_format(value: &str) -> Option<PublicSchemaFormat> {
+    match value {
+        "expanded" => Some(PublicSchemaFormat::Expanded),
+        "compact" => Some(PublicSchemaFormat::Compact),
+        _ => None,
+    }
 }
 
 fn main() -> ExitCode {
@@ -67,6 +75,7 @@ fn main() -> ExitCode {
     };
     let mut out_dir = PathBuf::from(".");
     let mut targets = Vec::new();
+    let mut public_format = PublicSchemaFormat::Expanded;
     while let Some(argument) = args.next() {
         if argument == "--out-dir" {
             let Some(path) = args.next() else {
@@ -83,6 +92,16 @@ fn main() -> ExitCode {
                 eprintln!("{error}");
                 return ExitCode::from(2);
             }
+        } else if argument == "--public-format" {
+            let Some(value) = args.next() else {
+                eprintln!("missing value for --public-format");
+                return ExitCode::from(2);
+            };
+            let Some(format) = parse_public_format(&value) else {
+                eprintln!("unknown public format: {value} (expected expanded or compact)");
+                return ExitCode::from(2);
+            };
+            public_format = format;
         } else {
             eprintln!("unknown argument: {argument}");
             return ExitCode::from(2);
@@ -100,7 +119,7 @@ fn main() -> ExitCode {
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or(&input);
-    let artifacts = match compile_schema(&source, name) {
+    let artifacts = match compile_schema_with_format(&source, name, public_format) {
         Ok(artifacts) => artifacts,
         Err(error) => {
             eprintln!("{} at byte {}", error.message, error.position);

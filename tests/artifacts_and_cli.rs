@@ -87,5 +87,18 @@ fn cli_defaults_to_native_rust_only_and_selects_one_target() {
     assert!(!python_dir.join("layer-8.go").exists());
     assert!(!python_dir.join("layer-8.h").exists());
 
+    let compact_dir = root.join("compact");
+    let compact = Command::new(&binary)
+        .args(["compile", schema.to_str().unwrap(), "--out-dir"])
+        .arg(&compact_dir)
+        .args(["--public-format", "compact"])
+        .output()
+        .unwrap();
+    assert!(compact.status.success());
+    let compact_public = fs::read_to_string(compact_dir.join("layer-8.public.typ")).unwrap();
+    assert!(compact_public.contains("#[cid("));
+    assert!(compact_public.contains("struct Ping { "));
+    assert!(!compact_public.contains("\nstruct Ping {\n"));
+
     fs::remove_dir_all(root).unwrap();
 }

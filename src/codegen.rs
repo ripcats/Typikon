@@ -15,7 +15,21 @@ pub fn generate_rust(schema: &Schema) -> String {
     output
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublicSchemaFormat {
+    Expanded,
+    Compact,
+}
+
 pub fn generate_public_schema(schema: &Schema) -> String {
+    generate_public_schema_with_format(schema, PublicSchemaFormat::Expanded)
+}
+
+pub fn generate_public_schema_compact(schema: &Schema) -> String {
+    generate_public_schema_with_format(schema, PublicSchemaFormat::Compact)
+}
+
+pub fn generate_public_schema_with_format(schema: &Schema, format: PublicSchemaFormat) -> String {
     let mut output = format!("#[version({})]\n\n", schema.version);
     for item in &schema.items {
         match item {
@@ -36,23 +50,40 @@ pub fn generate_public_schema(schema: &Schema) -> String {
             }
             Item::Struct(item) => {
                 let cid = item.cid.clone().unwrap_or_else(|| constructor_cid(item));
-                output.push_str(&format!("#[cid({cid})] struct {} {{ ", item.name));
-                output.push_str(
-                    &item
-                        .fields
-                        .iter()
-                        .map(|field| {
-                            let guard = field
-                                .guard
-                                .as_ref()
-                                .map(|guard| format!("#[guard({guard})] "))
-                                .unwrap_or_default();
-                            format!("{guard}{}: {}", field.name, schema_type(&field.ty))
-                        })
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                );
-                output.push_str(" }\n\n");
+                if format == PublicSchemaFormat::Compact {
+                    output.push_str(&format!("#[cid({cid})] struct {} {{ ", item.name));
+                    output.push_str(
+                        &item
+                            .fields
+                            .iter()
+                            .map(|field| {
+                                let guard = field
+                                    .guard
+                                    .as_ref()
+                                    .map(|guard| format!("#[guard({guard})] "))
+                                    .unwrap_or_default();
+                                format!("{guard}{}: {}", field.name, schema_type(&field.ty))
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    );
+                    output.push_str(" }\n\n");
+                } else {
+                    output.push_str(&format!("#[cid({cid})]\nstruct {} {{\n", item.name));
+                    for field in &item.fields {
+                        let guard = field
+                            .guard
+                            .as_ref()
+                            .map(|guard| format!("#[guard({guard})] "))
+                            .unwrap_or_default();
+                        output.push_str(&format!(
+                            "    {guard}{}: {},\n",
+                            field.name,
+                            schema_type(&field.ty)
+                        ));
+                    }
+                    output.push_str("}\n\n");
+                }
             }
             Item::Enum(item) => {
                 output.push_str(&format!("enum {} {{ ", item.name));
@@ -978,10 +1009,13 @@ mod tests {
     fn generates_public_schema_with_computed_cids() {
         let schema = parse_schema("#[version(10)] #[flags(u8)] enum F { Ready = 0, } struct Message { flags: F, #[guard(flags.ready)] value: Vec<u64>, } ").unwrap();
         let public = generate_public_schema(&schema);
+        let compact = generate_public_schema_compact(&schema);
         assert!(public.starts_with("#[version(10)]"));
         assert!(public.contains("#[flags(u8)] enum F"));
         assert!(public.contains("#[cid("));
         assert!(public.contains("#[guard(flags.ready)]"));
         assert!(public.contains("value: Vec<u64>"));
+        assert!(public.contains("#[cid(") && public.contains("\nstruct Message {\n"));
+        assert!(compact.contains("struct Message { ") && !compact.contains("\nstruct Message {\n"));
     }
 }

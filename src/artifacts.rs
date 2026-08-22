@@ -1,7 +1,7 @@
 use crate::{
-    BridgeKind, ParseError, generate_bridge, generate_c_header, generate_go_binding,
-    generate_public_schema, generate_python_binding, generate_rust, generate_typescript_binding,
-    parse_schema,
+    BridgeKind, ParseError, PublicSchemaFormat, generate_bridge, generate_c_header,
+    generate_go_binding, generate_public_schema_with_format, generate_python_binding,
+    generate_rust, generate_typescript_binding, parse_schema,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,8 +24,17 @@ pub struct GeneratedArtifacts {
 }
 
 pub fn compile_schema(source: &str, schema_name: &str) -> Result<GeneratedArtifacts, ParseError> {
+    compile_schema_with_format(source, schema_name, PublicSchemaFormat::Expanded)
+}
+
+pub fn compile_schema_with_format(
+    source: &str,
+    schema_name: &str,
+    public_format: PublicSchemaFormat,
+) -> Result<GeneratedArtifacts, ParseError> {
     let schema = parse_schema(source)?;
     let name = schema_name.strip_suffix(".typ").unwrap_or(schema_name);
+    let name = name.strip_suffix(".public").unwrap_or(name);
     let name = name
         .strip_suffix(&format!("-{}", schema.version))
         .unwrap_or(name);
@@ -39,7 +48,7 @@ pub fn compile_schema(source: &str, schema_name: &str) -> Result<GeneratedArtifa
         rust_file_name,
         public_schema_file_name: format!("{name}-{}.public.typ", schema.version),
         rust_source: generate_rust(&schema),
-        public_schema: generate_public_schema(&schema),
+        public_schema: generate_public_schema_with_format(&schema, public_format),
         bridge_file_names,
         bridge_sources,
         bridge_header_name: format!("{}-{}.h", name, schema.version),
@@ -80,5 +89,15 @@ mod tests {
         assert_eq!(artifacts.go_file_name, "layer-8.go");
         assert_eq!(artifacts.python_file_name, "layer_8.py");
         assert_eq!(artifacts.typescript_file_name, "layer-8.ts");
+    }
+
+    #[test]
+    fn recompiles_public_schema_without_changing_artifact_names() {
+        let source = compile_schema("#[version(8)] struct User { id: u64, }", "layer-8.typ")
+            .unwrap()
+            .public_schema;
+        let artifacts = compile_schema(&source, "layer-8.public.typ").unwrap();
+        assert_eq!(artifacts.rust_file_name, "layer-8.rs");
+        assert_eq!(artifacts.public_schema_file_name, "layer-8.public.typ");
     }
 }

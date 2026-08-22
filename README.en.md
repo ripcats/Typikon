@@ -54,6 +54,16 @@ cargo run -- check examples/messenger.typ
 cargo run -- compile examples/messenger.typ \
   --out-dir /tmp/typikon-messenger \
   --target python,golang,typescript
+
+# public.typ can be recompiled without backend adapters;
+# --target is optional
+cargo run -- compile examples/messenger-10.public.typ \
+  --out-dir /tmp/typikon-public
+
+# compact public.typ when needed
+cargo run -- compile examples/messenger.typ \
+  --out-dir /tmp/typikon-public-compact \
+  --public-format compact
 ~~~
 
 Repository checks:
@@ -230,7 +240,7 @@ The canonical form includes the constructor name, field order, types, and guard 
 [8 raw C-ID bytes][encoded fields]
 ~~~
 
-The compiler emits `{name}-{layer}.public.typ`, a compact read-only schema passport containing computed `#[cid(...)]` values. It can be parsed again and compared with the compiler output.
+The compiler emits `{name}-{layer}.public.typ`, a read-only schema passport with computed `#[cid(...)]` values and expanded struct formatting. It can be parsed again and compared with the compiler output.
 
 ## Demo: messenger
 
@@ -281,7 +291,7 @@ Transport and application logic intentionally remain a separate layer. Typikon f
 
 ## What is actually tested
 
-The Rust suite contains **66 tests: 61 unit tests and 5 integration tests** covering parsing and semantic validation, code generation, the CLI, Layer/C-ID handling, wire round-trips, limits, malformed input, maps, VarInt, borrowed views, language-view generation, vectored writes, randomized inputs, and FlatBuffers round-trip comparison.
+The Rust suite contains **67 tests: 62 unit tests and 5 integration tests** covering parsing and semantic validation, code generation, the CLI, Layer/C-ID handling, wire round-trips, limits, malformed input, maps, VarInt, borrowed views, language-view generation, vectored writes, randomized inputs, and FlatBuffers round-trip comparison.
 
 Python/Go/TypeScript bindings, ownership/aliasing, lazy iteration, duplicate/unsorted maps, the cross-language round-trip, and semantic parity with FlatBuffers are also checked (`cargo test --test flatbuffers_comparison`, `(cd bindings/typescript && npm test)`, `go test ./bindings/go`, `./tests/cross_language_roundtrip.sh`, `./tests/generated_go_views.sh`). Benchmarks are available through `cargo bench --bench wire` and `cargo bench --bench compare`; they measure wire size, encoding/decoding, borrowed views, and allocations, but are not network benchmarks. Long-running validation is separate: `TYPIKON_STRESS_SECONDS=172800 ./tests/long_validation.sh`.
 

@@ -54,6 +54,16 @@ cargo run -- check examples/messenger.typ
 cargo run -- compile examples/messenger.typ \
   --out-dir /tmp/typikon-messenger \
   --target python,golang,typescript
+
+# public.typ можно повторно скомпилировать без backend-адаптеров;
+# --target является опциональным
+cargo run -- compile examples/messenger-10.public.typ \
+  --out-dir /tmp/typikon-public
+
+# компактный public.typ при необходимости
+cargo run -- compile examples/messenger.typ \
+  --out-dir /tmp/typikon-public-compact \
+  --public-format compact
 ~~~
 
 Проверки репозитория:
@@ -230,7 +240,7 @@ Canonical form учитывает имя constructor’а, порядок пол
 [8 raw C-ID bytes][encoded fields]
 ~~~
 
-Артефакт `{name}-{layer}.public.typ` — компактный read-only паспорт схемы с вычисленными `#[cid(...)]`. Его можно повторно распарсить и сравнить с результатом компиляции.
+Артефакт `{name}-{layer}.public.typ` — read-only паспорт схемы с вычисленными `#[cid(...)]` и развёрнутым форматированием структур. Его можно повторно распарсить и сравнить с результатом компиляции.
 
 ## Demo: messenger
 
@@ -281,7 +291,7 @@ Typikon — собственная schema-driven реализация бинар
 
 ## Что реально проверено
 
-Rust suite включает **66 тестов: 61 unit и 5 integration** — parser и semantic validation, code generation, CLI, Layer/C-ID, wire round-trips, limits, malformed input, maps, VarInt, borrowed views, language-view generation, vectored writes, randomized inputs и round-trip сравнение с FlatBuffers.
+Rust suite включает **67 тестов: 62 unit и 5 integration** — parser и semantic validation, code generation, CLI, Layer/C-ID, wire round-trips, limits, malformed input, maps, VarInt, borrowed views, language-view generation, vectored writes, randomized inputs и round-trip сравнение с FlatBuffers.
 
 Дополнительно проверяются Python/Go/TypeScript bindings, owner/aliasing, lazy iteration, duplicate/unsorted maps, cross-language round-trip и semantic parity с FlatBuffers (`cargo test --test flatbuffers_comparison`, `(cd bindings/typescript && npm test)`, `go test ./bindings/go`, `./tests/cross_language_roundtrip.sh`, `./tests/generated_go_views.sh`). Benchmarks: `cargo bench --bench wire` и `cargo bench --bench compare`; они измеряют wire size, encode/decode, borrowed views и allocations, но не являются сетевым benchmark. Длительная проверка запускается отдельно: `TYPIKON_STRESS_SECONDS=172800 ./tests/long_validation.sh`.
 

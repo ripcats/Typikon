@@ -49,10 +49,27 @@ fn add_targets(value: &str, targets: &mut Vec<Target>) -> Result<(), String> {
     Ok(())
 }
 
-fn usage() {
-    eprintln!(
-        "Usage:\n  typikon check <schema.typ>\n  typikon compile <schema.typ> [--out-dir <directory>] [--target python,golang,typescript] [--public-format expanded|compact]"
+fn print_help() {
+    println!(
+        "Typikon — schema compiler for the Typikon binary wire format\n\n\
+USAGE:\n  typikon <COMMAND> [OPTIONS]\n\n\
+COMMANDS:\n  check <SCHEMA>      Validate a schema without writing files\n  compile <SCHEMA>    Generate Rust and public schema artifacts\n  help                Show this help\n\n\
+COMPILE OPTIONS:\n  --out-dir <DIR>     Output directory (default: current directory)\n  --target <LIST>     Add language backends: python, golang, typescript\n  --public-format <F> Public schema format: expanded (default) or compact\n  -h, --help          Show command help\n\n\
+NOTES:\n  compile always writes Rust and .public.typ files.\n  --target adds the selected language backend files.\n  A .public.typ file can be used as input again.\n\n\
+EXAMPLES:\n  typikon check examples/messenger.typ\n  typikon compile examples/messenger.typ --out-dir /tmp/typikon\n  typikon compile examples/messenger.typ --target python,golang,typescript\n  typikon compile examples/messenger-10.public.typ --out-dir /tmp/public\n"
     );
+}
+
+fn print_command_help(command: &str) {
+    match command {
+        "check" => println!(
+            "Validate a Typikon schema.\n\nUSAGE:\n  typikon check <SCHEMA>\n\nEXAMPLE:\n  typikon check examples/messenger.typ"
+        ),
+        "compile" => println!(
+            "Generate Rust and public schema artifacts.\n\nUSAGE:\n  typikon compile <SCHEMA> [OPTIONS]\n\nOPTIONS:\n  --out-dir <DIR>     Output directory (default: current directory)\n  --target <LIST>     Add python, golang, or typescript backends\n  --public-format <F> expanded (default) or compact\n  -h, --help          Show this help\n\nEXAMPLES:\n  typikon compile examples/messenger.typ --out-dir /tmp/typikon\n  typikon compile examples/messenger.typ --target python,golang,typescript\n"
+        ),
+        _ => print_help(),
+    }
 }
 
 fn parse_public_format(value: &str) -> Option<PublicSchemaFormat> {
@@ -66,18 +83,38 @@ fn parse_public_format(value: &str) -> Option<PublicSchemaFormat> {
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
     let Some(command) = args.next() else {
-        usage();
+        print_help();
         return ExitCode::from(2);
     };
+    if matches!(command.as_str(), "-h" | "--help" | "help") {
+        print_help();
+        return ExitCode::SUCCESS;
+    }
+    if matches!(command.as_str(), "-V" | "--version" | "version") {
+        println!("typikon {}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::SUCCESS;
+    }
+    if !matches!(command.as_str(), "check" | "compile") {
+        eprintln!("unknown command: {command}\n");
+        print_help();
+        return ExitCode::from(2);
+    }
     let Some(input) = args.next() else {
-        usage();
+        print_command_help(&command);
         return ExitCode::from(2);
     };
+    if matches!(input.as_str(), "-h" | "--help") {
+        print_command_help(&command);
+        return ExitCode::SUCCESS;
+    }
     let mut out_dir = PathBuf::from(".");
     let mut targets = Vec::new();
     let mut public_format = PublicSchemaFormat::Expanded;
     while let Some(argument) = args.next() {
-        if argument == "--out-dir" {
+        if matches!(argument.as_str(), "-h" | "--help") {
+            print_command_help(&command);
+            return ExitCode::SUCCESS;
+        } else if argument == "--out-dir" {
             let Some(path) = args.next() else {
                 eprintln!("missing value for --out-dir");
                 return ExitCode::from(2);
@@ -206,7 +243,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         _ => {
-            usage();
+            print_help();
             ExitCode::from(2)
         }
     }

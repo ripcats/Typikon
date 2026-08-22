@@ -51,6 +51,33 @@ fn cli_check_and_compile_work_end_to_end() {
 }
 
 #[test]
+fn cli_help_is_available_at_global_and_command_levels() {
+    let binary = PathBuf::from(std::env::var("CARGO_BIN_EXE_typikon").unwrap());
+    let help = Command::new(&binary).arg("--help").output().unwrap();
+    assert!(help.status.success());
+    assert!(String::from_utf8_lossy(&help.stdout).contains("COMMANDS:"));
+    assert!(String::from_utf8_lossy(&help.stdout).contains("--public-format"));
+
+    let compile_help = Command::new(&binary)
+        .args(["compile", "--help"])
+        .output()
+        .unwrap();
+    assert!(compile_help.status.success());
+    assert!(String::from_utf8_lossy(&compile_help.stdout).contains("Generate Rust"));
+    assert!(String::from_utf8_lossy(&compile_help.stdout).contains("--target"));
+
+    let trailing_help = Command::new(&binary)
+        .args(["compile", "schema.typ", "--help"])
+        .output()
+        .unwrap();
+    assert!(trailing_help.status.success());
+
+    let version = Command::new(&binary).arg("--version").output().unwrap();
+    assert!(version.status.success());
+    assert!(String::from_utf8_lossy(&version.stdout).contains("typikon 0.2.0"));
+}
+
+#[test]
 fn cli_defaults_to_native_rust_only_and_selects_one_target() {
     let binary = PathBuf::from(std::env::var("CARGO_BIN_EXE_typikon").unwrap());
     let schema = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/layers/layer-8.typ");

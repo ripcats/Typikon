@@ -51,6 +51,9 @@ Typikon задуман как кроссплатформенный проток�
 cargo run -- check examples/messenger.typ
 # valid Layer 10: messenger.typ
 
+cargo run -- --help
+cargo run -- compile --help
+
 cargo run -- compile examples/messenger.typ \
   --out-dir /tmp/typikon-messenger \
   --target python,golang,typescript
@@ -291,7 +294,7 @@ Typikon — собственная schema-driven реализация бинар
 
 ## Что реально проверено
 
-Rust suite включает **67 тестов: 62 unit и 5 integration** — parser и semantic validation, code generation, CLI, Layer/C-ID, wire round-trips, limits, malformed input, maps, VarInt, borrowed views, language-view generation, vectored writes, randomized inputs и round-trip сравнение с FlatBuffers.
+Rust suite включает **68 тестов: 62 unit и 6 integration** — parser и semantic validation, code generation, CLI, Layer/C-ID, wire round-trips, limits, malformed input, maps, VarInt, borrowed views, language-view generation, vectored writes, randomized inputs и round-trip сравнение с FlatBuffers.
 
 Дополнительно проверяются Python/Go/TypeScript bindings, owner/aliasing, lazy iteration, duplicate/unsorted maps, cross-language round-trip и semantic parity с FlatBuffers (`cargo test --test flatbuffers_comparison`, `(cd bindings/typescript && npm test)`, `go test ./bindings/go`, `./tests/cross_language_roundtrip.sh`, `./tests/generated_go_views.sh`). Benchmarks: `cargo bench --bench wire` и `cargo bench --bench compare`; они измеряют wire size, encode/decode, borrowed views и allocations, но не являются сетевым benchmark. Длительная проверка запускается отдельно: `TYPIKON_STRESS_SECONDS=172800 ./tests/long_validation.sh`.
 

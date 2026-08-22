@@ -252,7 +252,7 @@ fn generate_struct(item: &Struct, schema: &Schema, output: &mut String) {
             if is_byte_vec(&field.ty) {
                 output.push_str(&format!("        if {effective}.contains({owner_type}::{}) {{ if let Some(value) = &self.{} {{ size = size.saturating_add(typikon::varint_len(value.len() as u64)).saturating_add(value.len()); }} }}\n", const_name(bit), field.name));
             } else {
-                output.push_str(&format!("        if {effective}.contains({owner_type}::{}) {{ if let Some(value) = &self.{} {{ size = size.saturating_add(typikon::WireCodec::encoded_len(value)); }} }}\n", const_name(bit), field.name));
+                output.push_str(&format!("        if {effective}.contains({owner_type}::{}) && let Some(value) = &self.{} {{ size = size.saturating_add(typikon::WireCodec::encoded_len(value)); }}\n", const_name(bit), field.name));
             }
         } else if is_byte_vec(&field.ty) {
             output.push_str(&format!("        size = size.saturating_add(typikon::varint_len(self.{}.len() as u64)).saturating_add(self.{}.len());\n", field.name, field.name));

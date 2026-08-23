@@ -724,14 +724,7 @@ fn generate_go_struct(item: &crate::Struct, schema: &Schema, output: &mut String
         };
         output.push_str(&format!(
             "{}if {}{{{}|={}(1<<{})}}else{{{}&^={}(1<<{})}};",
-            declaration,
-            present,
-            effective,
-            owner_type,
-            bit,
-            effective,
-            owner_type,
-            bit
+            declaration, present, effective, owner_type, bit, effective, owner_type, bit
         ));
     }
     for field in &item.fields {
@@ -2415,7 +2408,12 @@ mod tests {
         assert!(typescript.contains("let effective_flags = value.flags"));
         assert!(typescript.contains("value.avatar !== undefined"));
         assert!(typescript.contains("value.bio !== undefined"));
-        assert_eq!(typescript.matches("let effective_flags = value.flags").count(), 1);
+        assert_eq!(
+            typescript
+                .matches("let effective_flags = value.flags")
+                .count(),
+            1
+        );
         assert!(typescript.contains("write_flags(e, effective_flags)"));
     }
 

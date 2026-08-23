@@ -9,6 +9,9 @@ pub fn generate_rust(schema: &Schema) -> String {
         output.push_str(&format!(
             "mod __typikon_fixed_bytes_{length} {{\n    use serde::{{Deserialize, Deserializer, Serializer}};\n    pub fn serialize<S>(value: &[u8; {length}], serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {{ serializer.serialize_bytes(value) }}\n    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; {length}], D::Error> where D: Deserializer<'de> {{ let value = Vec::<u8>::deserialize(deserializer)?; value.try_into().map_err(|_| serde::de::Error::custom(\"invalid fixed byte length\")) }}\n}}\n\n"
         ));
+        output.push_str(&format!(
+            "mod __typikon_optional_fixed_bytes_{length} {{\n    use serde::{{Deserialize, Deserializer, Serializer}};\n    pub fn serialize<S>(value: &Option<[u8; {length}]>, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {{ match value {{ Some(value) => serializer.serialize_some(&value[..]), None => serializer.serialize_none() }} }}\n    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<[u8; {length}]>, D::Error> where D: Deserializer<'de> {{ let value = Option::<Vec<u8>>::deserialize(deserializer)?; value.map(|value| value.try_into().map_err(|_| serde::de::Error::custom(\"invalid fixed byte length\"))).transpose() }}\n}}\n\n"
+        ));
     }
     for item in &schema.items {
         match item {
@@ -829,7 +832,14 @@ fn rust_field_type(field: &Field) -> String {
 
 fn serde_field_attribute(field: &Field, schema: &Schema) -> String {
     fixed_byte_length(&field.ty, schema)
-        .map(|length| format!("#[serde(with = \"__typikon_fixed_bytes_{length}\")]\n        "))
+        .map(|length| {
+            let module = if field.guard.is_some() {
+                format!("__typikon_optional_fixed_bytes_{length}")
+            } else {
+                format!("__typikon_fixed_bytes_{length}")
+            };
+            format!("#[serde(with = \"{module}\")]\n        ")
+        })
         .unwrap_or_default()
 }
 
@@ -1102,6 +1112,19 @@ mod tests {
     }
 
     #[test]
+    fn generates_optional_serde_helpers_for_guarded_fixed_bytes() {
+        let schema = parse_schema(
+            "#[version(1)] type Token = bytes[21]; #[flags(u16)] enum Flags { HasAccessHash = 0, } struct User { flags: Flags, #[guard(flags.has_access_hash)] access_hash: Token, }",
+        )
+        .unwrap();
+        let generated = generate_rust(&schema);
+        assert!(generated.contains("mod __typikon_optional_fixed_bytes_21"));
+        assert!(generated.contains(
+            "#[serde(with = \"__typikon_optional_fixed_bytes_21\")]\n        pub access_hash: Option<Token>"
+        ));
+    }
+
+    #[test]
     fn guard_bits_follow_option_presence_during_encode_and_length() {
         let schema = parse_schema(
             "#[version(1)] #[flags(u16)] enum Flags { HasAvatar = 2, HasBio = 3, } struct User { flags: Flags, #[guard(flags.has_avatar)] avatar: String, #[guard(flags.has_bio)] bio: String, }",
@@ -1111,9 +1134,11 @@ mod tests {
         assert!(generated.contains(
             "if self.avatar.is_some() { __typikon_effective_flags.0 |= Flags::HAS_AVATAR; }"
         ));
-        assert!(generated.contains(
-            "if self.bio.is_some() { __typikon_effective_flags.0 |= Flags::HAS_BIO; }"
-        ));
+        assert!(
+            generated.contains(
+                "if self.bio.is_some() { __typikon_effective_flags.0 |= Flags::HAS_BIO; }"
+            )
+        );
         assert!(generated.contains("if __typikon_effective_flags.contains(Flags::HAS_AVATAR)"));
         assert!(
             generated

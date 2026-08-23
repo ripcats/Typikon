@@ -21,6 +21,7 @@ All notable changes to Typikon since its initial public beta are documented here
 - Documented the `u16` Layer version range (`0..=65,535`) in both README files.
 - Guard bits are now derived automatically from guarded-field presence across the Rust, Go, TypeScript, and Python APIs during encoding.
 - Fixed Python generation for fixed-byte aliases, including serde support for arrays longer than 32 bytes and layer-independent module registration.
+- Fixed guard-bit accumulation so multiple guarded fields sharing one flags field update a single effective accumulator in Rust, Go, and TypeScript encoders.
 
 - Public `BorrowedWireCodec<'a>` and `decode_borrowed_value` APIs.
 - Generated `TypeRef<'a>` Rust views for zero-copy decoding of direct `String` and `Vec<u8>` fields.

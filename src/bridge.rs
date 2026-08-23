@@ -708,6 +708,7 @@ fn generate_go_struct(item: &crate::Struct, schema: &Schema, output: &mut String
         name,
         name
     ));
+    let mut initialized_guard_owners = Vec::new();
     for (owner, owner_type, bit, fields) in go_guard_groups(item, schema) {
         let effective = format!("__typikon_effective_{}", pascal_case(&owner));
         let present = fields
@@ -715,10 +716,15 @@ fn generate_go_struct(item: &crate::Struct, schema: &Schema, output: &mut String
             .map(|field| format!("v.{}!=nil", pascal_case(field)))
             .collect::<Vec<_>>()
             .join("||");
+        let declaration = if initialized_guard_owners.contains(&owner) {
+            String::new()
+        } else {
+            initialized_guard_owners.push(owner.clone());
+            format!("{}:=v.{};", effective, pascal_case(&owner))
+        };
         output.push_str(&format!(
-            "{}:=v.{};if {}{{{}|={}(1<<{})}}else{{{}&^={}(1<<{})}};",
-            effective,
-            pascal_case(&owner),
+            "{}if {}{{{}|={}(1<<{})}}else{{{}&^={}(1<<{})}};",
+            declaration,
             present,
             effective,
             owner_type,
@@ -1052,13 +1058,20 @@ fn generate_typescript_typed_item(item: &Item, schema: &Schema, output: &mut Str
             let fn_name = name.to_ascii_lowercase();
             let cid = st.cid.clone().unwrap_or_else(|| constructor_cid(st));
             output.push_str(&format!("const {name}CID = hex(\"{cid}\");\nfunction write_{fn_name}(e: WireEncoder, value: {name}): void {{ e.raw({name}CID);"));
+            let mut initialized_guard_owners = Vec::new();
             for (owner, bit, fields) in ts_guard_groups(st, schema) {
                 let present = fields
                     .iter()
                     .map(|field| format!("value.{} !== undefined", field))
                     .collect::<Vec<_>>()
                     .join(" || ");
-                output.push_str(&format!(" let effective_{} = value.{}; if ({present}) effective_{} |= (1 << {}); else effective_{} &= ~(1 << {});", owner, owner, owner, bit, owner, bit));
+                let declaration = if initialized_guard_owners.contains(&owner) {
+                    String::new()
+                } else {
+                    initialized_guard_owners.push(owner.clone());
+                    format!(" let effective_{owner} = value.{owner};")
+                };
+                output.push_str(&format!("{declaration} if ({present}) effective_{owner} |= (1 << {bit}); else effective_{owner} &= ~(1 << {bit});"));
             }
             for field in &st.fields {
                 let expr = format!("value.{}", field.name);
@@ -2389,16 +2402,20 @@ mod tests {
     #[test]
     fn generated_backends_derive_guard_bits_from_field_presence() {
         let schema = parse_schema(
-            "#[version(10)] #[flags(u16)] enum Flags { HasAvatar = 2, } struct User { flags: Flags, #[guard(flags.has_avatar)] avatar: String, }",
+            "#[version(10)] #[flags(u16)] enum Flags { HasAvatar = 2, HasBio = 3, } struct User { flags: Flags, #[guard(flags.has_avatar)] avatar: String, #[guard(flags.has_bio)] bio: String, }",
         )
         .unwrap();
         let go = generate_go_binding(&schema, "chat-10.h");
         assert!(go.contains("__typikon_effective_Flags:=v.Flags"));
         assert!(go.contains("v.Avatar!=nil"));
+        assert!(go.contains("v.Bio!=nil"));
+        assert_eq!(go.matches("__typikon_effective_Flags:=v.Flags").count(), 1);
         assert!(go.contains("encode_flags(e,__typikon_effective_Flags)"));
         let typescript = generate_typescript_binding(&schema);
         assert!(typescript.contains("let effective_flags = value.flags"));
         assert!(typescript.contains("value.avatar !== undefined"));
+        assert!(typescript.contains("value.bio !== undefined"));
+        assert_eq!(typescript.matches("let effective_flags = value.flags").count(), 1);
         assert!(typescript.contains("write_flags(e, effective_flags)"));
     }
 

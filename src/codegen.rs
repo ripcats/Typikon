@@ -261,6 +261,7 @@ fn generate_struct(item: &Struct, schema: &Schema, output: &mut String) {
         "        encoder.raw(&{}_CID_BYTES)?;\n",
         item.name.to_uppercase()
     ));
+    let mut initialized_guard_owners = BTreeSet::new();
     for (owner, owner_type, bit, fields) in guard_groups(item) {
         let effective = format!("__typikon_effective_{owner}");
         let present = fields
@@ -268,7 +269,10 @@ fn generate_struct(item: &Struct, schema: &Schema, output: &mut String) {
             .map(|field| format!("self.{field}.is_some()"))
             .collect::<Vec<_>>()
             .join(" || ");
-        output.push_str(&format!("        let mut {effective} = self.{owner}; if {present} {{ {effective}.0 |= {owner_type}::{bit}; }} else {{ {effective}.0 &= !{owner_type}::{bit}; }}\n"));
+        if initialized_guard_owners.insert(owner.clone()) {
+            output.push_str(&format!("        let mut {effective} = self.{owner};\n"));
+        }
+        output.push_str(&format!("        if {present} {{ {effective}.0 |= {owner_type}::{bit}; }} else {{ {effective}.0 &= !{owner_type}::{bit}; }}\n"));
     }
     for field in &item.fields {
         if let Some(guard) = &field.guard {
@@ -353,6 +357,7 @@ fn generate_struct(item: &Struct, schema: &Schema, output: &mut String) {
             .join(", "),
     );
     output.push_str(" })\n    }\n    fn encoded_len(&self) -> usize {\n        let mut size = typikon::CID_BYTES;\n");
+    let mut initialized_guard_owners = BTreeSet::new();
     for (owner, owner_type, bit, fields) in guard_groups(item) {
         let effective = format!("__typikon_effective_{owner}");
         let present = fields
@@ -360,7 +365,10 @@ fn generate_struct(item: &Struct, schema: &Schema, output: &mut String) {
             .map(|field| format!("self.{field}.is_some()"))
             .collect::<Vec<_>>()
             .join(" || ");
-        output.push_str(&format!("        let mut {effective} = self.{owner}; if {present} {{ {effective}.0 |= {owner_type}::{bit}; }} else {{ {effective}.0 &= !{owner_type}::{bit}; }}\n"));
+        if initialized_guard_owners.insert(owner.clone()) {
+            output.push_str(&format!("        let mut {effective} = self.{owner};\n"));
+        }
+        output.push_str(&format!("        if {present} {{ {effective}.0 |= {owner_type}::{bit}; }} else {{ {effective}.0 &= !{owner_type}::{bit}; }}\n"));
     }
     for field in &item.fields {
         if let Some(guard) = &field.guard {
@@ -1096,19 +1104,22 @@ mod tests {
     #[test]
     fn guard_bits_follow_option_presence_during_encode_and_length() {
         let schema = parse_schema(
-            "#[version(1)] #[flags(u16)] enum Flags { HasAvatar = 2, } struct User { flags: Flags, #[guard(flags.has_avatar)] avatar: String, }",
+            "#[version(1)] #[flags(u16)] enum Flags { HasAvatar = 2, HasBio = 3, } struct User { flags: Flags, #[guard(flags.has_avatar)] avatar: String, #[guard(flags.has_bio)] bio: String, }",
         )
         .unwrap();
         let generated = generate_rust(&schema);
         assert!(generated.contains(
             "if self.avatar.is_some() { __typikon_effective_flags.0 |= Flags::HAS_AVATAR; }"
         ));
+        assert!(generated.contains(
+            "if self.bio.is_some() { __typikon_effective_flags.0 |= Flags::HAS_BIO; }"
+        ));
         assert!(generated.contains("if __typikon_effective_flags.contains(Flags::HAS_AVATAR)"));
         assert!(
             generated
                 .matches("let mut __typikon_effective_flags")
                 .count()
-                >= 2
+                == 2
         );
     }
 

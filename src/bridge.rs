@@ -997,7 +997,7 @@ fn go_decode_go_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut String, gu
 
 pub fn generate_typescript_binding(schema: &Schema) -> String {
     let mut output = String::from(
-        "export interface TypikonNative { encodeBinary(layer: number, typeName: string, input: Uint8Array): Uint8Array; decodeBinary(layer: number, typeName: string, input: Uint8Array): Uint8Array; validateBinary(layer: number, typeName: string, input: Uint8Array): void; }\n\nclass WireEncoder { private b: number[] = []; raw(v: Uint8Array): void { for (const x of v) this.b.push(x); } u8(v: number): void { this.b.push(v & 255); } u16(v: number): void { this.u8(v); this.u8(v >>> 8); } u32(v: number): void { this.u8(v); this.u8(v >>> 8); this.u8(v >>> 16); this.u8(v >>> 24); } u64(v: number): void { let n = BigInt(v); for (let i = 0n; i < 8n; i++) { this.u8(Number(n & 255n)); n >>= 8n; } } i8(v: number): void { this.u8(v); } i16(v: number): void { this.u16(v); } i32(v: number): void { this.u32(v); } i64(v: number): void { this.u64(v); } f32(v: number): void { const x = new DataView(new ArrayBuffer(4)); x.setFloat32(0, v, true); this.u32(x.getUint32(0, true)); } f64(v: number): void { const x = new DataView(new ArrayBuffer(8)); x.setFloat64(0, v, true); this.u64(x.getBigUint64(0, true) as unknown as number); } bool(v: boolean): void { this.u8(v ? 1 : 0); } varint(v: number): void { let n = BigInt(v); while (n >= 128n) { this.u8(Number(n & 127n) | 128); n >>= 7n; } this.u8(Number(n)); } bytes(v: Uint8Array): void { this.varint(v.length); this.raw(v); } string(v: string): void { this.bytes(new TextEncoder().encode(v)); } finish(): Uint8Array { if (this.b.length > 4 * 1024 * 1024) throw new Error('packet exceeds limit'); return Uint8Array.from(this.b); } }\nclass WireDecoder { private p = 0; constructor(private readonly b: Uint8Array) {} take(n: number): Uint8Array { if (n < 0 || this.p > this.b.length - n) throw new Error('truncated wire'); const v = this.b.subarray(this.p, this.p + n); this.p += n; return v; } u8(): number { return this.take(1)[0]; } u16(): number { return this.u8() | (this.u8() << 8); } u32(): number { return (this.u8() | (this.u8() << 8) | (this.u8() << 16) | (this.u8() << 24)) >>> 0; } u64(): number { let n = 0n; for (let i = 0n; i < 8n; i++) n |= BigInt(this.u8()) << (8n * i); return Number(n); } i8(): number { return (this.u8() << 24) >> 24; } i16(): number { const n = this.u16(); return (n << 16) >> 16; } i32(): number { return this.u32() | 0; } i64(): number { return this.u64(); } f32(): number { const x = new DataView(this.take(4).slice().buffer); return x.getFloat32(0, true); } f64(): number { const x = new DataView(this.take(8).slice().buffer); return x.getFloat64(0, true); } bool(): boolean { return this.u8() !== 0; } varint(): number { let n = 0n; for (let i = 0n; i < 10n; i++) { const b = this.u8(); n |= BigInt(b & 127) << (7n * i); if (b < 128) return Number(n); } throw new Error('varint overflow'); } bytes(): Uint8Array { const n = this.varint(); return this.take(n); } string(): string { return new TextDecoder().decode(this.bytes()); } done(): void { if (this.p !== this.b.length) throw new Error('trailing bytes'); } }\nconst cid = (d: WireDecoder, want: Uint8Array): void => { const got = d.take(8); for (let i = 0; i < 8; i++) if (got[i] !== want[i]) throw new Error('invalid constructor ID'); };\nconst hex = (s: string): Uint8Array => Uint8Array.from(s.match(/.{2}/g)!.map(x => parseInt(x, 16)));\n\n",
+        "export interface TypikonNative { encodeBinary(layer: number, typeName: string, input: Uint8Array): Uint8Array; decodeBinary(layer: number, typeName: string, input: Uint8Array): Uint8Array; validateBinary(layer: number, typeName: string, input: Uint8Array): void; }\n\nclass WireEncoder { private b: number[] = []; raw(v: Uint8Array): void { for (const x of v) this.b.push(x); } u8(v: number): void { this.b.push(v & 255); } u16(v: number): void { this.u8(v); this.u8(v >>> 8); } u32(v: number): void { this.u8(v); this.u8(v >>> 8); this.u8(v >>> 16); this.u8(v >>> 24); } u64(v: bigint): void { let n = BigInt.asUintN(64, v); for (let i = 0n; i < 8n; i++) { this.u8(Number(n & 255n)); n >>= 8n; } } i8(v: number): void { this.u8(v); } i16(v: number): void { this.u16(v); } i32(v: number): void { this.u32(v); } i64(v: bigint): void { this.u64(v); } f32(v: number): void { const x = new DataView(new ArrayBuffer(4)); x.setFloat32(0, v, true); this.u32(x.getUint32(0, true)); } f64(v: number): void { const x = new DataView(new ArrayBuffer(8)); x.setFloat64(0, v, true); this.u64(x.getBigUint64(0, true)); } bool(v: boolean): void { this.u8(v ? 1 : 0); } varint(v: number): void { let n = BigInt(v); while (n >= 128n) { this.u8(Number(n & 127n) | 128); n >>= 7n; } this.u8(Number(n)); } bytes(v: Uint8Array): void { this.varint(v.length); this.raw(v); } string(v: string): void { this.bytes(new TextEncoder().encode(v)); } finish(): Uint8Array { if (this.b.length > 4 * 1024 * 1024) throw new Error('packet exceeds limit'); return Uint8Array.from(this.b); } }\nclass WireDecoder { private p = 0; constructor(private readonly b: Uint8Array) {} take(n: number): Uint8Array { if (n < 0 || this.p > this.b.length - n) throw new Error('truncated wire'); const v = this.b.subarray(this.p, this.p + n); this.p += n; return v; } u8(): number { return this.take(1)[0]; } u16(): number { return this.u8() | (this.u8() << 8); } u32(): number { return (this.u8() | (this.u8() << 8) | (this.u8() << 16) | (this.u8() << 24)) >>> 0; } u64(): bigint { let n = 0n; for (let i = 0n; i < 8n; i++) n |= BigInt(this.u8()) << (8n * i); return n; } i8(): number { return (this.u8() << 24) >> 24; } i16(): number { const n = this.u16(); return (n << 16) >> 16; } i32(): number { return this.u32() | 0; } i64(): bigint { return BigInt.asIntN(64, this.u64()); } f32(): number { const x = new DataView(this.take(4).slice().buffer); return x.getFloat32(0, true); } f64(): number { const x = new DataView(this.take(8).slice().buffer); return x.getFloat64(0, true); } bool(): boolean { return this.u8() !== 0; } varint(): number { let n = 0n; for (let i = 0n; i < 10n; i++) { const b = this.u8(); n |= BigInt(b & 127) << (7n * i); if (b < 128) return Number(n); } throw new Error('varint overflow'); } bytes(): Uint8Array { const n = this.varint(); return this.take(n); } string(): string { return new TextDecoder().decode(this.bytes()); } done(): void { if (this.p !== this.b.length) throw new Error('trailing bytes'); } }\nconst cid = (d: WireDecoder, want: Uint8Array): void => { const got = d.take(8); for (let i = 0; i < 8; i++) if (got[i] !== want[i]) throw new Error('invalid constructor ID'); };\nconst hex = (s: string): Uint8Array => Uint8Array.from(s.match(/.{2}/g)!.map(x => parseInt(x, 16)));\n\n",
     );
     output = output
         .replace("class WireDecoder {", "export class WireDecoder {")
@@ -1149,7 +1149,7 @@ fn generate_typescript_typed_item(item: &Item, schema: &Schema, output: &mut Str
             ));
             for v in &en.variants {
                 output.push_str(&format!(
-                    " case \"{}\": e.u64({}); break;",
+                    " case \"{}\": e.u64({}n); break;",
                     v.name,
                     v.value.unwrap_or_default()
                 ));
@@ -1162,7 +1162,7 @@ fn generate_typescript_typed_item(item: &Item, schema: &Schema, output: &mut Str
             ));
             for v in &en.variants {
                 output.push_str(&format!(
-                    " case {}: return \"{}\";",
+                    " case {}n: return \"{}\";",
                     v.value.unwrap_or_default(),
                     v.name
                 ));
@@ -2085,6 +2085,7 @@ fn typescript_type(ty: &Type, schema: &Schema) -> String {
             "String" => "string".into(),
             "bool" => "boolean".into(),
             n if n.starts_with('f') => "number".into(),
+            "u64" | "i64" => "bigint".into(),
             n if n.starts_with('u') || n.starts_with('i') => "number".into(),
             _ if schema.items.iter().any(|item| item_name(item) == name) => name.clone(),
             _ => "unknown".into(),
@@ -2390,6 +2391,22 @@ mod tests {
         assert!(go.contains("BatchItemsValuesLazyView"));
         assert!(go.contains("BatchItemsEntriesEntry"));
         assert!(go.contains("entry.Key)>=0"));
+    }
+
+    #[test]
+    fn typescript_preserves_64_bit_integer_precision() {
+        let schema = parse_schema(
+            "#[version(10)] struct Message { unsigned: u64, signed: i64, }",
+        )
+        .unwrap();
+        let generated = generate_typescript_binding(&schema);
+        assert!(generated.contains("unsigned: bigint"));
+        assert!(generated.contains("signed: bigint"));
+        assert!(generated.contains("u64(v: bigint)"));
+        assert!(generated.contains("u64(): bigint"));
+        assert!(generated.contains("i64(): bigint"));
+        assert!(!generated.contains("u64(): number"));
+        assert!(!generated.contains("i64(): number"));
     }
 
     #[test]

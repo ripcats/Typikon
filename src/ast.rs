@@ -16,6 +16,7 @@ pub enum Item {
 pub struct Alias {
     pub name: String,
     pub ty: Type,
+    pub exact_len: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

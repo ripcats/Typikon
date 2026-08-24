@@ -230,6 +230,49 @@ mod tests {
     }
 
     #[test]
+    fn parses_alias_exact_len_constraint() {
+        let schema = parse_schema(
+            "#[version(1)] type SealedSession = Vec<u8> #[exact_len(49)]; struct Packet { session: SealedSession, }",
+        )
+        .unwrap();
+        let Item::Alias(alias) = &schema.items[0] else {
+            panic!("expected alias")
+        };
+        assert_eq!(alias.exact_len, Some(49));
+        let public = generate_public_schema(&schema);
+        assert!(public.contains("type SealedSession = Vec<u8> #[exact_len(49)];"));
+        assert!(public.contains("session: SealedSession"));
+        let unconstrained = parse_schema(
+            "#[version(1)] type SealedSession = Vec<u8>; struct Packet { session: SealedSession, }",
+        )
+        .unwrap();
+        let Item::Struct(constrained_packet) = &schema.items[1] else {
+            unreachable!()
+        };
+        let Item::Struct(unconstrained_packet) = &unconstrained.items[1] else {
+            unreachable!()
+        };
+        assert_ne!(
+            crate::fingerprint::constructor_cid_with_schema(constrained_packet, &schema),
+            crate::fingerprint::constructor_cid_with_schema(unconstrained_packet, &unconstrained)
+        );
+    }
+
+    #[test]
+    fn rejects_alias_exact_len_on_non_bytes_vector() {
+        for source in [
+            "#[version(1)] type Bad = String #[exact_len(4)];",
+            "#[version(1)] type Bad = Vec<u16> #[exact_len(4)];",
+            "#[version(1)] type Bad = bytes[4] #[exact_len(4)];",
+        ] {
+            assert!(
+                parse_schema(source).is_err(),
+                "accepted invalid alias: {source}"
+            );
+        }
+    }
+
+    #[test]
     fn parses_optional_and_includes_it_in_canonical_form() {
         let schema = parse_schema(
             "#[version(1)] struct Profile { bio: Optional<String>, values: Vec<Optional<u64>>, }",

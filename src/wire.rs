@@ -427,6 +427,13 @@ impl Encoder {
         self.bytes.extend_from_slice(value);
         Ok(())
     }
+
+    pub fn bytes_exact(&mut self, value: &[u8], expected: usize) -> Result<(), WireError> {
+        if value.len() != expected {
+            return Err(WireError::MalformedConstructor);
+        }
+        self.bytes(value)
+    }
     pub fn value<T: WireCodec>(&mut self, value: &T) -> Result<(), WireError> {
         value.encode(self)
     }
@@ -570,6 +577,14 @@ impl<'a> Decoder<'a> {
     }
     pub fn bytes(&mut self) -> Result<Vec<u8>, WireError> {
         Ok(self.bytes_borrowed()?.to_vec())
+    }
+
+    pub fn bytes_exact(&mut self, expected: usize) -> Result<Vec<u8>, WireError> {
+        let value = self.bytes()?;
+        if value.len() != expected {
+            return Err(WireError::MalformedConstructor);
+        }
+        Ok(value)
     }
     pub fn bytes_borrowed(&mut self) -> Result<&'a [u8], WireError> {
         let len = usize::try_from(self.varint()?).map_err(|_| WireError::IntegerOverflow)?;
@@ -1015,6 +1030,19 @@ mod tests {
             crate::decode_value::<Option<String>>(&[2]),
             Err(WireError::MalformedConstructor)
         );
+    }
+
+    #[test]
+    fn exact_byte_helpers_keep_vec_length_prefix_and_reject_wrong_lengths() {
+        let mut encoder = Encoder::new(crate::DEFAULT_MAX_PACKET_SIZE);
+        encoder.bytes_exact(b"abcd", 4).unwrap();
+        assert_eq!(encoder.finish().unwrap(), vec![4, b'a', b'b', b'c', b'd']);
+        let mut decoder =
+            Decoder::new(&[4, b'a', b'b', b'c', b'd'], crate::DEFAULT_MAX_PACKET_SIZE).unwrap();
+        assert_eq!(decoder.bytes_exact(4).unwrap(), b"abcd");
+        let mut decoder =
+            Decoder::new(&[3, b'a', b'b', b'c'], crate::DEFAULT_MAX_PACKET_SIZE).unwrap();
+        assert_eq!(decoder.bytes_exact(4), Err(WireError::MalformedConstructor));
     }
 
     #[test]

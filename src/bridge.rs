@@ -1,5 +1,5 @@
 use crate::codegen::{borrowed_view_name, fixed_byte_length};
-use crate::fingerprint::{constructor_cid, variant_cid};
+use crate::fingerprint::{constructor_cid_with_schema, variant_cid_with_schema};
 use crate::{Item, Schema, Type};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,9 +122,19 @@ fn generate_go_item(item: &Item, schema: &Schema, output: &mut String) {
         Item::Alias(alias) => {
             output.push_str(&format!("type {name} = {};\n", go_type(&alias.ty, schema)));
             let mut encode = String::new();
+            if let Some(length) = alias.exact_len {
+                encode.push_str(&format!(
+                    "if len(v)!={length}{{panic(\"invalid exact length\")}};"
+                ));
+            }
             go_encode_go_type(&alias.ty, "v", schema, &mut encode);
             let mut decode = String::new();
             go_decode_go_type(&alias.ty, "v", schema, &mut decode, false);
+            if let Some(length) = alias.exact_len {
+                decode.push_str(&format!(
+                    "if len(v)!={length}{{return v,fmt.Errorf(\"invalid exact length\")}};"
+                ));
+            }
             output.push_str(&format!(
                 "func encode_{function_name}(e *wireEncoder,v {name}) {{{encode}}}\nfunc decode_{function_name}(d *wireDecoder) ({name},error) {{ var v {name}; var e error; {decode} return v,e }}\n"
             ));
@@ -481,7 +491,7 @@ fn generate_go_view_enum(item: &crate::Enum, schema: &Schema, output: &mut Strin
         let cid = variant
             .cid
             .clone()
-            .unwrap_or_else(|| variant_cid(item, variant));
+            .unwrap_or_else(|| variant_cid_with_schema(item, variant, schema));
         output.push_str(&format!(
             "case string([]byte{{{}}}): var v {vn};",
             cid_bytes(&cid)
@@ -586,7 +596,7 @@ fn generate_go_lazy_view_enum(item: &crate::Enum, schema: &Schema, output: &mut 
         let cid = variant
             .cid
             .clone()
-            .unwrap_or_else(|| variant_cid(item, variant));
+            .unwrap_or_else(|| variant_cid_with_schema(item, variant, schema));
         output.push_str(&format!(
             "case string([]byte{{{}}}):var v {variant_name};",
             cid_bytes(&cid)
@@ -723,7 +733,10 @@ fn generate_go_struct(item: &crate::Struct, schema: &Schema, output: &mut String
         ));
     }
     output.push_str("}\n");
-    let cid = item.cid.clone().unwrap_or_else(|| constructor_cid(item));
+    let cid = item
+        .cid
+        .clone()
+        .unwrap_or_else(|| constructor_cid_with_schema(item, schema));
     output.push_str(&format!("var {}CID=[]byte{{{}}}\n", name, cid_bytes(&cid)));
     output.push_str(&format!(
         "func encode_{}(e *wireEncoder,v {}){{e.raw({}CID);",
@@ -865,7 +878,10 @@ fn generate_go_enum(item: &crate::Enum, schema: &Schema, output: &mut String) {
     ));
     for v in &item.variants {
         let vn = format!("{}{}", name, v.name);
-        let cid = v.cid.clone().unwrap_or_else(|| variant_cid(item, v));
+        let cid = v
+            .cid
+            .clone()
+            .unwrap_or_else(|| variant_cid_with_schema(item, v, schema));
         output.push_str(&format!("case {vn}:e.raw([]byte{{{}}});", cid_bytes(&cid)));
         for f in &v.fields {
             if let Some(length) = f.exact_len {
@@ -886,7 +902,10 @@ fn generate_go_enum(item: &crate::Enum, schema: &Schema, output: &mut String) {
     output.push_str(&format!("func decode_{}(d *wireDecoder)({name},error){{var v {name};c,e:=d.take(8);if e!=nil{{return nil,e}};switch string(c){{",snake_case(name)));
     for v in &item.variants {
         let vn = format!("{}{}", name, v.name);
-        let cid = v.cid.clone().unwrap_or_else(|| variant_cid(item, v));
+        let cid = v
+            .cid
+            .clone()
+            .unwrap_or_else(|| variant_cid_with_schema(item, v, schema));
         output.push_str(&format!(
             "case string([]byte{{{}}}):var x {vn};",
             cid_bytes(&cid)
@@ -958,6 +977,11 @@ fn go_encode_go_type(ty: &Type, expr: &str, schema: &Schema, out: &mut String) {
         }
         Type::Primitive(n) => {
             if let Some(Item::Alias(alias)) = schema.items.iter().find(|i| item_name(i) == n) {
+                if let Some(length) = alias.exact_len {
+                    out.push_str(&format!(
+                        "if len({expr})!={length}{{panic(\"invalid exact length\")}};"
+                    ));
+                }
                 go_encode_go_type(&alias.ty, expr, schema, out);
             } else if schema.items.iter().any(|i| item_name(i) == n) {
                 out.push_str(&format!("encode_{}(e,{expr});", snake_case(n)))
@@ -1014,6 +1038,11 @@ fn go_decode_go_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut String, gu
         Type::Primitive(n) => {
             if let Some(Item::Alias(alias)) = schema.items.iter().find(|i| item_name(i) == n) {
                 go_decode_go_type(&alias.ty, lhs, schema, out, guarded);
+                if let Some(length) = alias.exact_len {
+                    out.push_str(&format!(
+                        "if len({lhs})!={length}{{return v,fmt.Errorf(\"invalid exact length\")}};"
+                    ));
+                }
             } else if schema.items.iter().any(|i| item_name(i) == n) {
                 out.push_str(&format!(
                     "{lhs},e=decode_{}(d);if e!=nil{{return v,e}};",
@@ -1084,9 +1113,21 @@ fn generate_typescript_typed_item(item: &Item, schema: &Schema, output: &mut Str
             let name = &alias.name;
             let lower = name.to_ascii_lowercase();
             let mut encode = String::new();
+            if let Some(length) = alias.exact_len {
+                encode.push_str(&format!(
+                    " if (value.length !== {length}) throw new Error('invalid exact length');"
+                ));
+            }
             typescript_encode_type(&alias.ty, "value", schema, &mut encode);
             let mut decode = String::new();
             typescript_decode_expression(&alias.ty, schema, &mut decode);
+            if let Some(length) = alias.exact_len {
+                decode = format!(
+                    "(()=>{{const value = {decode}; if (value.length !== {length}) throw new Error('invalid exact length'); return value;}})()",
+                    decode = decode,
+                    length = length
+                );
+            }
             output.push_str(&format!(
                 "function write_{lower}(e: WireEncoder, value: {name}): void {{{encode}}}\nfunction read_{lower}(d: WireDecoder): {name} {{ return {decode}; }}\nexport function encode{name}(value: {name}): Uint8Array {{ const e = new WireEncoder(); write_{lower}(e, value); return e.finish(); }}\nexport function decode{name}(wire: Uint8Array): {name} {{ const d = new WireDecoder(wire); const value = read_{lower}(d); d.done(); return value; }}\n\n"
             ));
@@ -1094,7 +1135,10 @@ fn generate_typescript_typed_item(item: &Item, schema: &Schema, output: &mut Str
         Item::Struct(st) => {
             let name = &st.name;
             let fn_name = name.to_ascii_lowercase();
-            let cid = st.cid.clone().unwrap_or_else(|| constructor_cid(st));
+            let cid = st
+                .cid
+                .clone()
+                .unwrap_or_else(|| constructor_cid_with_schema(st, schema));
             output.push_str(&format!("const {name}CID = hex(\"{cid}\");\nfunction write_{fn_name}(e: WireEncoder, value: {name}): void {{ e.raw({name}CID);"));
             let mut initialized_guard_owners = Vec::new();
             for (owner, bit, fields) in ts_guard_groups(st, schema) {
@@ -1225,7 +1269,7 @@ fn generate_typescript_typed_item(item: &Item, schema: &Schema, output: &mut Str
                 let cid = variant
                     .cid
                     .clone()
-                    .unwrap_or_else(|| variant_cid(en, variant));
+                    .unwrap_or_else(|| variant_cid_with_schema(en, variant, schema));
                 output.push_str(&format!(
                     " if (\"{}\" in value) {{ e.raw(hex(\"{}\"));",
                     variant.name, cid
@@ -1250,7 +1294,7 @@ fn generate_typescript_typed_item(item: &Item, schema: &Schema, output: &mut Str
                 let cid = variant
                     .cid
                     .clone()
-                    .unwrap_or_else(|| variant_cid(en, variant));
+                    .unwrap_or_else(|| variant_cid_with_schema(en, variant, schema));
                 output.push_str(&format!(
                     " if (c.every((x, i) => x === hex(\"{}\")[i])) {{ return {{ {}: {{",
                     cid, variant.name
@@ -1337,6 +1381,12 @@ fn typescript_encode_type(ty: &Type, expr: &str, schema: &Schema, out: &mut Stri
         }
         Type::Primitive(n) => {
             if let Some(Item::Alias(alias)) = schema.items.iter().find(|i| item_name(i) == n) {
+                if let Some(length) = alias.exact_len {
+                    out.push_str(&format!(
+                        " if ({}.length !== {}) throw new Error('invalid exact length');",
+                        expr, length
+                    ));
+                }
                 typescript_encode_type(&alias.ty, expr, schema, out);
             } else if schema.items.iter().any(|i| item_name(i) == n) {
                 out.push_str(&format!(" write_{}(e, {});", n.to_ascii_lowercase(), expr));
@@ -1378,6 +1428,12 @@ fn typescript_decode_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut Strin
         Type::Primitive(n) => {
             if let Some(Item::Alias(alias)) = schema.items.iter().find(|i| item_name(i) == n) {
                 typescript_decode_type(&alias.ty, lhs, schema, out);
+                if let Some(length) = alias.exact_len {
+                    out.push_str(&format!(
+                        " if ({}.length !== {}) throw new Error('invalid exact length');",
+                        lhs, length
+                    ));
+                }
             } else if schema.items.iter().any(|i| item_name(i) == n) {
                 out.push_str(&format!(" {} = read_{}(d);", lhs, n.to_ascii_lowercase()));
             } else {
@@ -1768,7 +1824,7 @@ fn generate_typescript_view_enum(item: &crate::Enum, schema: &Schema, output: &m
         let cid = variant
             .cid
             .clone()
-            .unwrap_or_else(|| variant_cid(item, variant));
+            .unwrap_or_else(|| variant_cid_with_schema(item, variant, schema));
         output.push_str(&format!(
             " if (c.every((x, i) => x === hex(\"{}\")[i])) return {{ {}: {{",
             cid, variant.name
@@ -1819,7 +1875,7 @@ fn generate_typescript_lazy_view_enum(item: &crate::Enum, schema: &Schema, outpu
         let cid = variant
             .cid
             .clone()
-            .unwrap_or_else(|| variant_cid(item, variant));
+            .unwrap_or_else(|| variant_cid_with_schema(item, variant, schema));
         output.push_str(&format!(
             " if (c.every((x, i) => x === hex(\"{}\")[i])) return {{ {}: {{",
             cid, variant.name
@@ -1892,6 +1948,10 @@ fn generate_typescript_lazy_view_enum(item: &crate::Enum, schema: &Schema, outpu
 }
 
 fn typescript_decode_view_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut String) {
+    if let Type::FixedBytes(length) = ty {
+        out.push_str(&format!(" {} = d.take({length});", lhs));
+        return;
+    }
     if is_bytes_type(ty) || matches!(ty, Type::Primitive(name) if name == "String") {
         out.push_str(&format!(" {} = d.bytes();", lhs));
         return;
@@ -2228,11 +2288,16 @@ pub fn generate_bridge(schema: &Schema, native_file: &str, kind: BridgeKind) -> 
             "pub fn decode_binary_{function_name}(input: &[u8]) -> Result<Vec<u8>, String> {{ let mut decoder = typikon::Decoder::new(input, typikon::DEFAULT_MAX_PACKET_SIZE).map_err(|error| format!(\"{{error:?}}\"))?; let _: {native_name} = typikon::WireCodec::decode(&mut decoder).map_err(|error| format!(\"{{error:?}}\"))?; if !decoder.is_finished() {{ return Err(\"trailing bytes\".into()); }} Ok(input.to_vec()) }}\n"
         ));
             } else {
+                let alias_check = match item {
+                    Item::Alias(alias) => alias.exact_len.map(|length| format!(" if value.len() != {length} {{ return Err(\"invalid exact length\".into()); }}")),
+                    _ => None,
+                };
+                let check = alias_check.unwrap_or_default();
                 output.push_str(&format!(
-            "pub fn encode_binary_{function_name}(input: &[u8]) -> Result<Vec<u8>, String> {{ let mut decoder = typikon::Decoder::new(input, typikon::DEFAULT_MAX_PACKET_SIZE).map_err(|error| format!(\"{{error:?}}\"))?; let _: {native_name} = typikon::WireCodec::decode(&mut decoder).map_err(|error| format!(\"{{error:?}}\"))?; if !decoder.is_finished() {{ return Err(\"trailing bytes\".into()); }} Ok(input.to_vec()) }}\n"
+            "pub fn encode_binary_{function_name}(input: &[u8]) -> Result<Vec<u8>, String> {{ let mut decoder = typikon::Decoder::new(input, typikon::DEFAULT_MAX_PACKET_SIZE).map_err(|error| format!(\"{{error:?}}\"))?; let value: {native_name} = typikon::WireCodec::decode(&mut decoder).map_err(|error| format!(\"{{error:?}}\"))?;{check} if !decoder.is_finished() {{ return Err(\"trailing bytes\".into()); }} Ok(input.to_vec()) }}\n"
         ));
                 output.push_str(&format!(
-            "pub fn decode_binary_{function_name}(input: &[u8]) -> Result<Vec<u8>, String> {{ let mut decoder = typikon::Decoder::new(input, typikon::DEFAULT_MAX_PACKET_SIZE).map_err(|error| format!(\"{{error:?}}\"))?; let _: {native_name} = typikon::WireCodec::decode(&mut decoder).map_err(|error| format!(\"{{error:?}}\"))?; if !decoder.is_finished() {{ return Err(\"trailing bytes\".into()); }} Ok(input.to_vec()) }}\n"
+            "pub fn decode_binary_{function_name}(input: &[u8]) -> Result<Vec<u8>, String> {{ let mut decoder = typikon::Decoder::new(input, typikon::DEFAULT_MAX_PACKET_SIZE).map_err(|error| format!(\"{{error:?}}\"))?; let value: {native_name} = typikon::WireCodec::decode(&mut decoder).map_err(|error| format!(\"{{error:?}}\"))?;{check} if !decoder.is_finished() {{ return Err(\"trailing bytes\".into()); }} Ok(input.to_vec()) }}\n"
         ));
             }
             let borrowed = if let Some(view_name) = borrowed_view_name(item, schema) {
@@ -2262,6 +2327,10 @@ pub fn generate_bridge(schema: &Schema, native_file: &str, kind: BridgeKind) -> 
                 Item::Alias(alias) => fixed_byte_length(&alias.ty, schema),
                 _ => None,
             };
+            let alias_exact = match item {
+                Item::Alias(alias) => alias.exact_len,
+                _ => None,
+            };
             let (encode_prefix, encode_body, decode_body, decode_value) = if let Some(length) =
                 alias_fixed
             {
@@ -2270,6 +2339,13 @@ pub fn generate_bridge(schema: &Schema, native_file: &str, kind: BridgeKind) -> 
                     "typikon::encode_value(&value).map_err(|error| PyValueError::new_err(format!(\"{error:?}\")))".to_owned(),
                     format!("let value: {native_name} = typikon::decode_value(input).map_err(|error| PyValueError::new_err(format!(\"{{error:?}}\")))?;"),
                     "&value.to_vec()".to_owned(),
+                )
+            } else if let Some(length) = alias_exact {
+                (
+                    format!("let value: {native_name} = pythonize::depythonize(value).map_err(|error| PyValueError::new_err(error.to_string()))?; if value.len() != {length} {{ return Err(PyValueError::new_err(\"invalid exact length\")); }}"),
+                    "typikon::encode_value(&value).map_err(|error| PyValueError::new_err(format!(\"{error:?}\")))".to_owned(),
+                    format!("let mut decoder = typikon::Decoder::new(input, typikon::DEFAULT_MAX_PACKET_SIZE).map_err(|error| PyValueError::new_err(format!(\"{{error:?}}\")))?; let value: {native_name} = typikon::WireCodec::decode(&mut decoder).map_err(|error| PyValueError::new_err(format!(\"{{error:?}}\")))?; if value.len() != {length} {{ return Err(PyValueError::new_err(\"invalid exact length\")); }} if !decoder.is_finished() {{ return Err(PyValueError::new_err(\"trailing bytes\")); }}"),
+                    "&value".to_owned(),
                 )
             } else if matches!(item, Item::Flags(_)) {
                 (
@@ -2441,6 +2517,16 @@ mod tests {
         let rust = crate::codegen::generate_rust(&schema);
         assert!(rust.contains("__typikon_fixed_bytes_16"));
         assert!(rust.contains("__typikon_fixed_bytes_16\")]"));
+    }
+
+    #[test]
+    fn typescript_views_decode_direct_fixed_bytes_in_enum_variants() {
+        let schema = parse_schema(
+            "#[version(10)] enum Peer { User { user_id: u32, user_ref: bytes[24] }, }",
+        )
+        .unwrap();
+        let typescript = generate_typescript_binding(&schema);
+        assert!(typescript.contains("user_ref: d.take(24)"));
     }
 
     #[test]

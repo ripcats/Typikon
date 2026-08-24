@@ -1,6 +1,6 @@
 use crate::ast::{Field, Item, Schema, Type};
 use crate::error::ParseError;
-use crate::fingerprint::{constructor_cid, variant_cid};
+use crate::fingerprint::{constructor_cid_with_schema, variant_cid_with_schema};
 use std::collections::HashSet;
 
 pub fn validate(schema: &Schema) -> Result<(), ParseError> {
@@ -18,11 +18,16 @@ pub fn validate(schema: &Schema) -> Result<(), ParseError> {
     }
     for item in &schema.items {
         match item {
-            Item::Alias(x) => validate_type(&x.ty, schema)?,
+            Item::Alias(x) => {
+                validate_type(&x.ty, schema)?;
+                if x.exact_len.is_some() && !is_bytes_vec(&x.ty) {
+                    return Err(error("alias exact_len is only valid for Vec<u8>"));
+                }
+            }
             Item::Struct(x) => {
                 validate_fields(&x.fields, schema)?;
                 if let Some(cid) = &x.cid
-                    && cid != &constructor_cid(x)
+                    && cid != &constructor_cid_with_schema(x, schema)
                 {
                     return Err(error("struct C-ID does not match its canonical form"));
                 }
@@ -48,7 +53,7 @@ pub fn validate(schema: &Schema) -> Result<(), ParseError> {
                         }
                     } else if !variant.fields.is_empty()
                         && let Some(cid) = &variant.cid
-                        && cid != &variant_cid(x, variant)
+                        && cid != &variant_cid_with_schema(x, variant, schema)
                     {
                         return Err(error("enum variant C-ID does not match its canonical form"));
                     }

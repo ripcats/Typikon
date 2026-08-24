@@ -1,5 +1,5 @@
 use crate::ast::{Enum, Field, Flags, Item, Schema, Struct, Type};
-use crate::fingerprint::{constructor_cid, variant_cid};
+use crate::fingerprint::{constructor_cid_with_schema, variant_cid_with_schema};
 use std::collections::BTreeSet;
 
 /// Generates the Rust type layer. Wire methods are added in the next codegen stage.
@@ -48,10 +48,15 @@ pub fn generate_public_schema_with_format(schema: &Schema, format: PublicSchemaF
     for item in &schema.items {
         match item {
             Item::Alias(alias) => {
+                let exact_len = alias
+                    .exact_len
+                    .map(|length| format!(" #[exact_len({length})]"))
+                    .unwrap_or_default();
                 output.push_str(&format!(
-                    "type {} = {};\n\n",
+                    "type {} = {}{};\n\n",
                     alias.name,
-                    schema_type(&alias.ty)
+                    schema_type(&alias.ty),
+                    exact_len
                 ));
             }
             Item::Flags(flags) => {
@@ -87,7 +92,10 @@ pub fn generate_public_schema_with_format(schema: &Schema, format: PublicSchemaF
                 }
             }
             Item::Struct(item) => {
-                let cid = item.cid.clone().unwrap_or_else(|| constructor_cid(item));
+                let cid = item
+                    .cid
+                    .clone()
+                    .unwrap_or_else(|| constructor_cid_with_schema(item, schema));
                 if format == PublicSchemaFormat::Compact {
                     output.push_str(&format!("#[cid({cid})] struct {} {{ ", item.name));
                     output.push_str(
@@ -153,7 +161,7 @@ pub fn generate_public_schema_with_format(schema: &Schema, format: PublicSchemaF
                     let variants = item
                         .variants
                         .iter()
-                        .map(|variant| public_enum_variant(item, variant, unit_enum))
+                        .map(|variant| public_enum_variant(item, variant, unit_enum, schema))
                         .collect::<Vec<_>>()
                         .join(", ");
                     output.push_str(&variants);
@@ -168,7 +176,7 @@ pub fn generate_public_schema_with_format(schema: &Schema, format: PublicSchemaF
                         };
                         output.push_str(&format!(
                             "    {}{}\n",
-                            public_enum_variant(item, variant, unit_enum),
+                            public_enum_variant(item, variant, unit_enum, schema),
                             separator
                         ));
                     }
@@ -181,14 +189,19 @@ pub fn generate_public_schema_with_format(schema: &Schema, format: PublicSchemaF
     output
 }
 
-fn public_enum_variant(item: &Enum, variant: &crate::EnumVariant, unit_enum: bool) -> String {
+fn public_enum_variant(
+    item: &Enum,
+    variant: &crate::EnumVariant,
+    unit_enum: bool,
+    schema: &Schema,
+) -> String {
     if unit_enum {
         format!("{} = {}", variant.name, variant.value.unwrap_or_default())
     } else {
         let cid = variant
             .cid
             .clone()
-            .unwrap_or_else(|| variant_cid(item, variant));
+            .unwrap_or_else(|| variant_cid_with_schema(item, variant, schema));
         let fields = variant
             .fields
             .iter()
@@ -234,7 +247,10 @@ fn schema_type(ty: &Type) -> String {
 }
 
 fn generate_struct(item: &Struct, schema: &Schema, output: &mut String) {
-    let cid = item.cid.clone().unwrap_or_else(|| constructor_cid(item));
+    let cid = item
+        .cid
+        .clone()
+        .unwrap_or_else(|| constructor_cid_with_schema(item, schema));
     output.push_str(&format!(
         "pub const {}_CID: &str = \"{}\";\npub const {}_CID_BYTES: [u8; typikon::CID_BYTES] = {};\n",
         item.name.to_uppercase(),
@@ -279,6 +295,7 @@ fn generate_struct(item: &Struct, schema: &Schema, output: &mut String) {
         output.push_str(&format!("        if {present} {{ {effective}.0 |= {owner_type}::{bit}; }} else {{ {effective}.0 &= !{owner_type}::{bit}; }}\n"));
     }
     for field in &item.fields {
+        let alias_exact = exact_len_for_type(&field.ty, schema);
         if let Some(guard) = &field.guard {
             let (owner, bit) = guard.split_once('.').unwrap_or(("flags", guard));
             let owner_type = item
@@ -292,13 +309,21 @@ fn generate_struct(item: &Struct, schema: &Schema, output: &mut String) {
                 let exact = field.exact_len.map(|n| format!("if value.len() != {n} {{ return Err(typikon::WireError::MalformedConstructor); }} ")).unwrap_or_default();
                 output.push_str(&format!("        if {effective}.contains({owner_type}::{}) {{ let value = self.{}.as_ref().ok_or(typikon::WireError::MalformedConstructor)?; {exact} encoder.bytes(value)?; }}\n", const_name(bit), field.name));
             } else {
-                output.push_str(&format!("        if {effective}.contains({owner_type}::{}) {{ self.{}.as_ref().ok_or(typikon::WireError::MalformedConstructor)?.encode(encoder)?; }}\n", const_name(bit), field.name));
+                let check = alias_exact.map(|n| format!(" if value.len() != {n} {{ return Err(typikon::WireError::MalformedConstructor); }}")).unwrap_or_default();
+                output.push_str(&format!("        if {effective}.contains({owner_type}::{}) {{ let value = self.{}.as_ref().ok_or(typikon::WireError::MalformedConstructor)?;{} value.encode(encoder)?; }}\n", const_name(bit), field.name, check));
             }
         } else if is_byte_vec(&field.ty) {
             let exact = field.exact_len.map(|n| format!("        if self.{}.len() != {n} {{ return Err(typikon::WireError::MalformedConstructor); }}\n", field.name)).unwrap_or_default();
             output.push_str(&exact);
             output.push_str(&format!("        encoder.bytes(&self.{})?;\n", field.name));
         } else {
+            if let Some(length) = alias_exact {
+                output.push_str(&format!(
+                    "        encoder.bytes_exact(&self.{}, {})?;\n",
+                    field.name, length
+                ));
+                continue;
+            }
             let owner_has_guards = guard_groups(item)
                 .iter()
                 .any(|(owner, _, _, _)| owner == &field.name);
@@ -316,6 +341,7 @@ fn generate_struct(item: &Struct, schema: &Schema, output: &mut String) {
         item.name.to_uppercase()
     ));
     for field in &item.fields {
+        let alias_exact = exact_len_for_type(&field.ty, schema);
         if let Some(guard) = &field.guard {
             let (owner, bit) = guard.split_once('.').unwrap_or(("flags", guard));
             let owner_type = item
@@ -331,6 +357,9 @@ fn generate_struct(item: &Struct, schema: &Schema, output: &mut String) {
                 "typikon::WireCodec::decode(decoder)?".to_owned()
             };
             output.push_str(&format!("        let {}: Option<{}> = if {}.contains({}::{}) {{ Some({}) }} else {{ None }};\n", field.name, rust_type(&field.ty), owner, owner_type, const_name(bit), decode));
+            if let Some(length) = alias_exact {
+                output.push_str(&format!("        if let Some(value) = &{} {{ if value.len() != {} {{ return Err(typikon::WireError::MalformedConstructor); }} }}\n", field.name, length));
+            }
         } else if is_byte_vec(&field.ty) {
             output.push_str(&format!(
                 "        let {}: {} = decoder.bytes()?;\n",
@@ -343,12 +372,22 @@ fn generate_struct(item: &Struct, schema: &Schema, output: &mut String) {
                     field.name, length
                 ));
             }
+        } else if let Some(length) = alias_exact {
+            output.push_str(&format!(
+                "        let {}: {} = decoder.bytes_exact({})?;\n",
+                field.name,
+                rust_type(&field.ty),
+                length
+            ));
         } else {
             output.push_str(&format!(
                 "        let {}: {} = typikon::WireCodec::decode(decoder)?;\n",
                 field.name,
                 rust_type(&field.ty)
             ));
+            if let Some(length) = alias_exact {
+                output.push_str(&format!("        if {}.len() != {} {{ return Err(typikon::WireError::MalformedConstructor); }}\n", field.name, length));
+            }
         }
     }
     output.push_str("        Ok(Self { ");
@@ -562,7 +601,7 @@ fn generate_enum(item: &Enum, schema: &Schema, output: &mut String) {
         let cid = variant
             .cid
             .clone()
-            .unwrap_or_else(|| variant_cid(item, variant));
+            .unwrap_or_else(|| variant_cid_with_schema(item, variant, schema));
         output.push_str(&format!(
             "pub const {}_{}_CID: &str = \"{}\";\npub const {}_{}_CID_BYTES: [u8; typikon::CID_BYTES] = {};\n",
             item.name.to_uppercase(),
@@ -604,13 +643,21 @@ fn generate_enum(item: &Enum, schema: &Schema, output: &mut String) {
                     .join(", ")
             ));
             for field in &variant.fields {
+                let alias_exact = exact_len_for_type(&field.ty, schema);
                 if is_byte_vec(&field.ty) {
                     if let Some(length) = field.exact_len {
                         output.push_str(&format!(" if {}.len() != {} {{ return Err(typikon::WireError::MalformedConstructor); }}", field.name, length));
                     }
                     output.push_str(&format!(" encoder.bytes({})?;", field.name));
                 } else {
-                    output.push_str(&format!(" {}.encode(encoder)?;", field.name));
+                    if let Some(length) = alias_exact {
+                        output.push_str(&format!(
+                            " encoder.bytes_exact({}, {})?;",
+                            field.name, length
+                        ));
+                    } else {
+                        output.push_str(&format!(" {}.encode(encoder)?;", field.name));
+                    }
                 }
             }
             output.push_str(" },\n");
@@ -624,6 +671,7 @@ fn generate_enum(item: &Enum, schema: &Schema, output: &mut String) {
             variant.name.to_uppercase()
         ));
         for field in &variant.fields {
+            let alias_exact = exact_len_for_type(&field.ty, schema);
             if is_byte_vec(&field.ty) {
                 output.push_str(&format!(
                     " let {}: {} = decoder.bytes()?;",
@@ -637,11 +685,23 @@ fn generate_enum(item: &Enum, schema: &Schema, output: &mut String) {
                     ));
                 }
             } else {
-                output.push_str(&format!(
-                    " let {}: {} = typikon::WireCodec::decode(decoder)?;",
-                    field.name,
-                    rust_type(&field.ty)
-                ));
+                if let Some(length) = alias_exact {
+                    output.push_str(&format!(
+                        " let {}: {} = decoder.bytes_exact({})?;",
+                        field.name,
+                        rust_type(&field.ty),
+                        length
+                    ));
+                } else {
+                    output.push_str(&format!(
+                        " let {}: {} = typikon::WireCodec::decode(decoder)?;",
+                        field.name,
+                        rust_type(&field.ty)
+                    ));
+                }
+                if let Some(length) = alias_exact {
+                    output.push_str(&format!(" if {}.len() != {} {{ return Err(typikon::WireError::MalformedConstructor); }}", field.name, length));
+                }
             }
         }
         if variant.fields.is_empty() {
@@ -1052,6 +1112,16 @@ fn is_byte_vec(ty: &Type) -> bool {
     matches!(ty, Type::Vec(item) if matches!(item.as_ref(), Type::Primitive(name) if name == "u8"))
 }
 
+fn exact_len_for_type(ty: &Type, schema: &Schema) -> Option<usize> {
+    let Type::Primitive(name) = ty else {
+        return None;
+    };
+    schema.items.iter().find_map(|item| match item {
+        Item::Alias(alias) if &alias.name == name => alias.exact_len,
+        _ => None,
+    })
+}
+
 fn const_name(name: &str) -> String {
     let mut result = String::new();
     for (index, character) in name.chars().enumerate() {
@@ -1074,6 +1144,7 @@ fn cid_literal(cid: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fingerprint::constructor_cid;
     use crate::parse_schema;
 
     #[test]
@@ -1148,6 +1219,19 @@ mod tests {
         assert!(generated.contains(
             "#[serde(with = \"__typikon_optional_fixed_bytes_21\")]\n        pub access_hash: Option<Token>"
         ));
+    }
+
+    #[test]
+    fn generates_alias_exact_len_checks_in_rust_codec() {
+        let schema = parse_schema(
+            "#[version(1)] type SealedSession = Vec<u8> #[exact_len(49)]; struct Packet { session: SealedSession, }",
+        )
+        .unwrap();
+        let generated = generate_rust(&schema);
+        assert!(generated.contains("encoder.bytes_exact(&self.session, 49)"));
+        assert!(generated.contains("decoder.bytes_exact(49)"));
+        let public = generate_public_schema(&schema);
+        assert!(public.contains("type SealedSession = Vec<u8> #[exact_len(49)];"));
     }
 
     #[test]

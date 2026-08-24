@@ -47,8 +47,13 @@ impl<'a> Parser<'a> {
             let name = self.identifier()?;
             self.expect("=")?;
             let ty = self.parse_type()?;
+            let exact_len = self.parse_exact_len_attr()?;
             self.consume(";");
-            return Ok(Item::Alias(Alias { name, ty }));
+            return Ok(Item::Alias(Alias {
+                name,
+                ty,
+                exact_len,
+            }));
         }
         if self.consume("#[flags(") {
             let underlying = self.identifier()?;

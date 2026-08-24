@@ -17,28 +17,40 @@ pub enum CompatibilityError {
 /// This is an opt-in schema migration audit. It is intentionally separate from
 /// Layer negotiation: Layers remain independent artifacts and are never
 /// implicitly treated as an inheritance chain.
-pub fn is_backward_compatible(old: &Schema, new: &Schema) -> Result<(), CompatibilityError> {
-    for old_item in &old.items {
+pub fn is_backward_compatible(
+    old_schema: &Schema,
+    new_schema: &Schema,
+) -> Result<(), CompatibilityError> {
+    for old_item in &old_schema.items {
         let name = item_name(old_item);
-        let Some(new_item) = new.items.iter().find(|item| item_name(item) == name) else {
+        let Some(new_item) = new_schema.items.iter().find(|item| item_name(item) == name) else {
             continue;
         };
         match (old_item, new_item) {
             (Item::Struct(old), Item::Struct(new)) => {
-                if struct_signature(old) != struct_signature(new) {
+                if struct_signature(old, old_schema) != struct_signature(new, new_schema) {
                     return Err(CompatibilityError::ExistingItemChanged { name });
                 }
             }
-            (Item::Enum(old), Item::Enum(new)) => check_enum(old, new)?,
+            (Item::Enum(old), Item::Enum(new)) => check_enum(old, new, old_schema, new_schema)?,
             (Item::Flags(old), Item::Flags(new)) => check_flags(old, new)?,
-            (Item::Alias(old), Item::Alias(new)) if old.ty == new.ty => {}
+            (Item::Alias(old), Item::Alias(new)) => {
+                if old.ty != new.ty || old.exact_len != new.exact_len {
+                    return Err(CompatibilityError::ExistingItemChanged { name });
+                }
+            }
             _ => return Err(CompatibilityError::ItemKindChanged { name }),
         }
     }
     Ok(())
 }
 
-fn check_enum(old: &Enum, new: &Enum) -> Result<(), CompatibilityError> {
+fn check_enum(
+    old: &Enum,
+    new: &Enum,
+    old_schema: &Schema,
+    new_schema: &Schema,
+) -> Result<(), CompatibilityError> {
     for old_variant in &old.variants {
         let Some(new_variant) = new
             .variants
@@ -50,7 +62,8 @@ fn check_enum(old: &Enum, new: &Enum) -> Result<(), CompatibilityError> {
                 variant: old_variant.name.clone(),
             });
         };
-        if variant_signature(old_variant) != variant_signature(new_variant) {
+        if variant_signature(old_variant, old_schema) != variant_signature(new_variant, new_schema)
+        {
             return Err(CompatibilityError::ExistingEnumVariantChanged {
                 enum_name: old.name.clone(),
                 variant: old_variant.name.clone(),
@@ -92,35 +105,57 @@ fn item_name(item: &Item) -> String {
     }
 }
 
-fn struct_signature(item: &Struct) -> Vec<String> {
-    item.fields.iter().map(field_signature).collect()
+fn struct_signature(item: &Struct, schema: &Schema) -> Vec<String> {
+    item.fields
+        .iter()
+        .map(|field| field_signature(field, schema))
+        .collect()
 }
 
-fn variant_signature(item: &EnumVariant) -> (Option<u64>, Option<String>, Vec<String>) {
+fn variant_signature(
+    item: &EnumVariant,
+    schema: &Schema,
+) -> (Option<u64>, Option<String>, Vec<String>) {
     (
         item.value,
         item.cid.clone(),
-        item.fields.iter().map(field_signature).collect(),
+        item.fields
+            .iter()
+            .map(|field| field_signature(field, schema))
+            .collect(),
     )
 }
 
-fn field_signature(field: &Field) -> String {
+fn field_signature(field: &Field, schema: &Schema) -> String {
     format!(
         "{}:{}:{}:{:?}",
         field.name,
         field.guard.as_deref().unwrap_or(""),
-        type_signature(&field.ty),
+        type_signature(&field.ty, schema),
         field.exact_len
     )
 }
 
-fn type_signature(ty: &Type) -> String {
+fn type_signature(ty: &Type, schema: &Schema) -> String {
     match ty {
-        Type::Primitive(name) => name.clone(),
+        Type::Primitive(name) => schema
+            .items
+            .iter()
+            .find_map(|item| match item {
+                Item::Alias(alias) if &alias.name == name => alias
+                    .exact_len
+                    .map(|length| format!("{name}{{exact_len={length}}}")),
+                _ => None,
+            })
+            .unwrap_or_else(|| name.clone()),
         Type::FixedBytes(length) => format!("bytes[{length}]"),
-        Type::Optional(item) => format!("Optional<{}>", type_signature(item)),
-        Type::Vec(item) => format!("Vec<{}>", type_signature(item)),
-        Type::Map(key, value) => format!("Map<{},{}>", type_signature(key), type_signature(value)),
+        Type::Optional(item) => format!("Optional<{}>", type_signature(item, schema)),
+        Type::Vec(item) => format!("Vec<{}>", type_signature(item, schema)),
+        Type::Map(key, value) => format!(
+            "Map<{},{}>",
+            type_signature(key, schema),
+            type_signature(value, schema)
+        ),
     }
 }
 
@@ -159,6 +194,22 @@ mod tests {
         assert!(matches!(
             is_backward_compatible(&old, &new),
             Err(CompatibilityError::ExistingEnumVariantChanged { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_alias_constraint_changes() {
+        let old = parse_schema(
+            "#[version(1)] type Token = Vec<u8> #[exact_len(49)]; struct Message { token: Token, }",
+        )
+        .unwrap();
+        let new = parse_schema(
+            "#[version(2)] type Token = Vec<u8> #[exact_len(50)]; struct Message { token: Token, }",
+        )
+        .unwrap();
+        assert!(matches!(
+            is_backward_compatible(&old, &new),
+            Err(CompatibilityError::ExistingItemChanged { .. })
         ));
     }
 }

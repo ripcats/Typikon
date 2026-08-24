@@ -1252,8 +1252,8 @@ fn ts_guard_bit(schema: &Schema, owner: &str, bit: &str) -> u64 {
         .items
         .iter()
         .find_map(|item| {
-            if item_name(item) == owner {
-                if let Item::Flags(flags) = item {
+            if let Item::Flags(flags) = item {
+                if item_name(item) == owner || owner == "flags" {
                     flags.bits.iter().find(|x| x.name == bit).map(|x| x.value)
                 } else {
                     None
@@ -1477,6 +1477,7 @@ fn typescript_has_lazy_view(name: &str, schema: &Schema) -> bool {
 
 fn typescript_lazy_view_type(ty: &Type, schema: &Schema) -> String {
     match ty {
+        Type::Vec(_) if is_bytes_type(ty) => "Uint8Array".into(),
         Type::Primitive(name)
             if schema.items.iter().any(|item| item_name(item) == name)
                 && typescript_has_lazy_view(name, schema) =>
@@ -2395,10 +2396,8 @@ mod tests {
 
     #[test]
     fn typescript_preserves_64_bit_integer_precision() {
-        let schema = parse_schema(
-            "#[version(10)] struct Message { unsigned: u64, signed: i64, }",
-        )
-        .unwrap();
+        let schema =
+            parse_schema("#[version(10)] struct Message { unsigned: u64, signed: i64, }").unwrap();
         let generated = generate_typescript_binding(&schema);
         assert!(generated.contains("unsigned: bigint"));
         assert!(generated.contains("signed: bigint"));

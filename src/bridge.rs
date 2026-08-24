@@ -175,6 +175,7 @@ fn generate_go_item(item: &Item, schema: &Schema, output: &mut String) {
 
 fn go_view_type(ty: &Type, schema: &Schema) -> String {
     match ty {
+        Type::Optional(item) => format!("*{}", go_view_type(item, schema)),
         Type::FixedBytes(_) => "[]byte".into(),
         Type::Primitive(name) if name == "String" => "[]byte".into(),
         Type::Vec(_) if is_bytes_type(ty) => "[]byte".into(),
@@ -315,6 +316,17 @@ fn go_decode_lazy_view_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut Str
         return;
     }
     match ty {
+        Type::Optional(item) => {
+            out.push_str(&format!(
+                "{{tag,e:=d.u8();if e!=nil{{return v,e}};if tag==1{{var x {};",
+                go_lazy_view_type(item, schema)
+            ));
+            go_decode_lazy_view_type(item, "x", schema, out);
+            out.push_str(&format!(
+                "{}=&x}}else if tag!=0{{return v,fmt.Errorf(\"invalid optional marker\")}}}};",
+                lhs
+            ));
+        }
         Type::Primitive(name) if schema.items.iter().any(|item| item_name(item) == name) => {
             if go_has_lazy_view(name, schema) {
                 out.push_str(&format!(
@@ -640,6 +652,17 @@ fn go_decode_view_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut String) 
         return;
     }
     match ty {
+        Type::Optional(item) => {
+            out.push_str(&format!(
+                "{{tag,e:=d.u8();if e!=nil{{return v,e}};if tag==1{{var x {};",
+                go_view_type(item, schema)
+            ));
+            go_decode_view_type(item, "x", schema, out);
+            out.push_str(&format!(
+                "{}=&x}}else if tag!=0{{return v,fmt.Errorf(\"invalid optional marker\")}}}};",
+                lhs
+            ));
+        }
         Type::Primitive(name) if schema.items.iter().any(|i| item_name(i) == name) => {
             if go_named_view(name, schema) {
                 out.push_str(&format!(
@@ -928,6 +951,11 @@ fn go_encode_go_type(ty: &Type, expr: &str, schema: &Schema, out: &mut String) {
         return;
     }
     match ty {
+        Type::Optional(item) => {
+            out.push_str(&format!("if {expr}==nil{{e.u8(0)}}else{{e.u8(1);"));
+            go_encode_go_type(item, &format!("*({expr})"), schema, out);
+            out.push_str("};");
+        }
         Type::Primitive(n) => {
             if let Some(Item::Alias(alias)) = schema.items.iter().find(|i| item_name(i) == n) {
                 go_encode_go_type(&alias.ty, expr, schema, out);
@@ -966,6 +994,23 @@ fn go_decode_go_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut String, gu
         return;
     }
     match ty {
+        Type::Optional(item) => {
+            let tag = format!(
+                "optionalTag{}",
+                lhs.chars()
+                    .filter(|c| c.is_ascii_alphanumeric())
+                    .collect::<String>()
+            );
+            out.push_str(&format!(
+                "{tag},e:=d.u8();if e!=nil{{return v,e}};if {tag}==1{{var x {};",
+                go_type(item, schema)
+            ));
+            go_decode_go_type(item, "x", schema, out, false);
+            out.push_str(&format!(
+                "{}=&x}}else if {tag}!=0{{return v,fmt.Errorf(\"invalid optional marker\")}};",
+                lhs
+            ));
+        }
         Type::Primitive(n) => {
             if let Some(Item::Alias(alias)) = schema.items.iter().find(|i| item_name(i) == n) {
                 go_decode_go_type(&alias.ty, lhs, schema, out, guarded);
@@ -1282,6 +1327,14 @@ fn typescript_encode_type(ty: &Type, expr: &str, schema: &Schema, out: &mut Stri
         return;
     }
     match ty {
+        Type::Optional(item) => {
+            out.push_str(&format!(
+                " e.u8({} === undefined ? 0 : 1); if ({} !== undefined) {{",
+                expr, expr
+            ));
+            typescript_encode_type(item, expr, schema, out);
+            out.push_str(" }");
+        }
         Type::Primitive(n) => {
             if let Some(Item::Alias(alias)) = schema.items.iter().find(|i| item_name(i) == n) {
                 typescript_encode_type(&alias.ty, expr, schema, out);
@@ -1317,6 +1370,11 @@ fn typescript_decode_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut Strin
         return;
     }
     match ty {
+        Type::Optional(item) => {
+            out.push_str(" { const tag = d.u8(); if (tag === 1) {");
+            typescript_decode_type(item, lhs, schema, out);
+            out.push_str(&format!(" }} else if (tag === 0) {{ {} = undefined; }} else throw new Error('invalid optional marker'); }}", lhs));
+        }
         Type::Primitive(n) => {
             if let Some(Item::Alias(alias)) = schema.items.iter().find(|i| item_name(i) == n) {
                 typescript_decode_type(&alias.ty, lhs, schema, out);
@@ -1355,6 +1413,11 @@ fn typescript_decode_expression(ty: &Type, schema: &Schema, out: &mut String) {
         return;
     }
     match ty {
+        Type::Optional(item) => {
+            out.push_str("(()=>{const tag=d.u8();if(tag===0)return undefined;if(tag!==1)throw new Error('invalid optional marker');return ");
+            typescript_decode_expression(item, schema, out);
+            out.push_str(";})()");
+        }
         Type::Primitive(n) => {
             if schema.items.iter().any(|i| item_name(i) == n) {
                 out.push_str(&format!("read_{}(d)", n.to_ascii_lowercase()));
@@ -1378,6 +1441,7 @@ fn typescript_decode_expression(ty: &Type, schema: &Schema, out: &mut String) {
 
 fn typescript_view_type(ty: &Type, schema: &Schema) -> String {
     match ty {
+        Type::Optional(item) => format!("{} | undefined", typescript_view_type(item, schema)),
         Type::FixedBytes(_) => "Uint8Array".into(),
         Type::Primitive(name) if name == "String" => "Uint8Array".into(),
         Type::Primitive(name) if schema.items.iter().any(|i| item_name(i) == name) => {
@@ -1504,6 +1568,11 @@ fn typescript_decode_lazy_expression(ty: &Type, schema: &Schema, out: &mut Strin
         return;
     }
     match ty {
+        Type::Optional(item) => {
+            out.push_str("(()=>{const tag=d.u8();if(tag===0)return undefined;if(tag!==1)throw new Error('invalid optional marker');return ");
+            typescript_decode_lazy_expression(item, schema, out);
+            out.push_str(";})()");
+        }
         Type::Primitive(name) if schema.items.iter().any(|item| item_name(item) == name) => {
             let suffix = if typescript_has_lazy_view(name, schema) {
                 "_lazy_view"
@@ -1828,6 +1897,11 @@ fn typescript_decode_view_type(ty: &Type, lhs: &str, schema: &Schema, out: &mut 
         return;
     }
     match ty {
+        Type::Optional(item) => {
+            out.push_str(" { const tag = d.u8(); if (tag === 1) {");
+            typescript_decode_view_type(item, lhs, schema, out);
+            out.push_str(&format!(" }} else if (tag === 0) {{ {} = undefined; }} else throw new Error('invalid optional marker'); }}", lhs));
+        }
         Type::Primitive(name) if schema.items.iter().any(|i| item_name(i) == name) => {
             let is_view = typescript_named_view(name, schema);
             out.push_str(&format!(
@@ -1880,6 +1954,11 @@ fn typescript_decode_view_expression(ty: &Type, schema: &Schema, out: &mut Strin
         return;
     }
     match ty {
+        Type::Optional(item) => {
+            out.push_str("(()=>{const tag=d.u8();if(tag===0)return undefined;if(tag!==1)throw new Error('invalid optional marker');return ");
+            typescript_decode_view_expression(item, schema, out);
+            out.push_str(";})()");
+        }
         Type::Primitive(name) if schema.items.iter().any(|i| item_name(i) == name) => {
             let is_view = typescript_named_view(name, schema);
             out.push_str(&format!(
@@ -2050,6 +2129,7 @@ fn go_type(ty: &Type, schema: &Schema) -> String {
         return "[]byte".into();
     }
     match ty {
+        Type::Optional(item) => format!("*{}", go_type(item, schema)),
         Type::Primitive(name) => match name.as_str() {
             "String" => "string".into(),
             "bool" => "bool".into(),
@@ -2082,6 +2162,7 @@ fn typescript_type(ty: &Type, schema: &Schema) -> String {
         return "Uint8Array".into();
     }
     match ty {
+        Type::Optional(item) => format!("{} | undefined", typescript_type(item, schema)),
         Type::Primitive(name) => match name.as_str() {
             "String" => "string".into(),
             "bool" => "boolean".into(),

@@ -32,6 +32,7 @@ fn type_canonical(ty: &Type) -> String {
     match ty {
         Type::Primitive(name) => name.clone(),
         Type::FixedBytes(length) => format!("bytes[{length}]"),
+        Type::Optional(item) => format!("Optional<{}>", type_canonical(item)),
         Type::Vec(item) => format!("Vec<{}>", type_canonical(item)),
         Type::Map(key, value) => format!("Map<{},{}>", type_canonical(key), type_canonical(value)),
     }

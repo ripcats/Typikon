@@ -3,7 +3,7 @@
 ![Typikon Protocol](assets/cover.png)
 
 [![Версия](https://img.shields.io/badge/%D0%92%D0%B5%D1%80%D1%81%D0%B8%D1%8F-Beta-5865F2?style=for-the-badge&logo=github&logoColor=white)](#что-реально-проверено)
-[![Тесты](https://img.shields.io/badge/%D0%A2%D0%B5%D1%81%D1%82%D1%8B-78%20%D0%BF%D1%80%D0%BE%D0%B9%D0%B4%D0%B5%D0%BD%D0%BD%D1%8B%D1%85-3FB950?style=for-the-badge&logo=githubactions&logoColor=white)](#что-реально-проверено)
+[![Тесты](https://img.shields.io/badge/%D0%A2%D0%B5%D1%81%D1%82%D1%8B-80%20%D0%BF%D1%80%D0%BE%D0%B9%D0%B4%D0%B5%D0%BD%D0%BD%D1%8B%D1%85-3FB950?style=for-the-badge&logo=githubactions&logoColor=white)](#что-реально-проверено)
 [![Evgeny Gerber](https://img.shields.io/badge/Evgeny%20Gerber-2AABEE?style=for-the-badge&logo=telegram&logoColor=white)](https://ripcats.t.me)
 [![English](https://img.shields.io/badge/English-2D333B?style=for-the-badge&logo=libretranslate&logoColor=white)](README.en.md)
 
@@ -211,7 +211,16 @@ struct User {
 
 При encode наличие guarded-поля — источник истины: генераторы Rust, Go, TypeScript и Python автоматически выставляют связанный бит для непустого значения и сбрасывают его для отсутствующего. Вручную синхронизировать `flags` не требуется; при decode wire-бит по-прежнему определяет, читать ли поле.
 
-Опциональность в Typikon всегда явная: отдельного `Option<T>` или `nullable<T>` в синтаксисе схем нет.
+Для обычной локальной optional-семантики используется `Optional<T>`:
+
+```rust
+struct Profile {
+    bio: Optional<String>,
+    answers: Vec<Optional<String>>,
+}
+```
+
+`Optional<T>` кодируется непосредственно перед значением: `0` означает `None`, `1` — `Some(T)`, после чего идёт обычное wire-представление `T`. Он композируется внутри `Vec` и `Map`; `Optional<Optional<T>>` запрещён. Для битовой компактности и именованных условий по-прежнему используются `flags` и `#[guard]`.
 
 ### Struct, enum и unit enum
 
@@ -318,7 +327,7 @@ Typikon — собственная schema-driven реализация бинар
 
 ## Что реально проверено
 
-Rust suite включает **78 тестов: 72 unit и 6 integration** — parser и semantic validation, code generation, CLI, Layer/C-ID, wire round-trips, fixed byte arrays и exact-length checks, comments, limits, malformed input, maps, VarInt, borrowed views, language-view generation, vectored writes, randomized inputs и round-trip сравнение с FlatBuffers.
+Rust suite включает **80 тестов: 74 unit и 6 integration** — parser и semantic validation, code generation, CLI, Layer/C-ID, wire round-trips, fixed byte arrays и exact-length checks, comments, limits, malformed input, maps, VarInt, optional markers, borrowed views, language-view generation, vectored writes, randomized inputs и round-trip сравнение с FlatBuffers.
 
 Дополнительно проверяются Python/Go/TypeScript bindings, owner/aliasing, lazy iteration, duplicate/unsorted maps, cross-language round-trip и semantic parity с FlatBuffers (`cargo test --test flatbuffers_comparison`, `(cd bindings/typescript && npm test)`, `go test ./bindings/go`, `./tests/cross_language_roundtrip.sh`, `./tests/generated_go_views.sh`). Benchmarks: `cargo bench --bench wire` и `cargo bench --bench compare`; они измеряют wire size, encode/decode, borrowed views и allocations, но не являются сетевым benchmark. Длительная проверка запускается отдельно: `TYPIKON_STRESS_SECONDS=172800 ./tests/long_validation.sh`.
 

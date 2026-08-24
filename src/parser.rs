@@ -176,6 +176,12 @@ impl<'a> Parser<'a> {
                 self.expect(">")?;
                 Ok(Type::Vec(Box::new(t)))
             }
+            "Optional" => {
+                self.expect("<")?;
+                let t = self.parse_type_at(depth + 1)?;
+                self.expect(">")?;
+                Ok(Type::Optional(Box::new(t)))
+            }
             "Map" => {
                 self.expect("<")?;
                 let k = self.parse_type_at(depth + 1)?;

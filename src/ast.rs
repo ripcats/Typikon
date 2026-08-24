@@ -64,6 +64,7 @@ pub struct Field {
 pub enum Type {
     Primitive(String),
     FixedBytes(usize),
+    Optional(Box<Type>),
     Vec(Box<Type>),
     Map(Box<Type>, Box<Type>),
 }

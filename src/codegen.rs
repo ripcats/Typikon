@@ -227,6 +227,7 @@ fn schema_type(ty: &Type) -> String {
     match ty {
         Type::Primitive(name) => name.clone(),
         Type::FixedBytes(length) => format!("bytes[{length}]"),
+        Type::Optional(item) => format!("Optional<{}>", schema_type(item)),
         Type::Vec(item) => format!("Vec<{}>", schema_type(item)),
         Type::Map(key, value) => format!("Map<{}, {}>", schema_type(key), schema_type(value)),
     }
@@ -833,7 +834,7 @@ fn rust_field_type(field: &Field) -> String {
 fn serde_field_attribute(field: &Field, schema: &Schema) -> String {
     fixed_byte_length(&field.ty, schema)
         .map(|length| {
-            let module = if field.guard.is_some() {
+            let module = if field.guard.is_some() || matches!(field.ty, Type::Optional(_)) {
                 format!("__typikon_optional_fixed_bytes_{length}")
             } else {
                 format!("__typikon_fixed_bytes_{length}")
@@ -900,6 +901,10 @@ fn borrowed_decode_expression(ty: &Type, schema: &Schema) -> String {
     match ty {
         Type::Primitive(name) if name == "String" => "decoder.string_borrowed()?".into(),
         Type::FixedBytes(length) => format!("decoder.fixed_bytes_borrowed::<{length}>()?"),
+        Type::Optional(item) => format!(
+            "match decoder.u8()? {{ 0 => None, 1 => Some({}), _ => return Err(typikon::WireError::MalformedConstructor) }}",
+            borrowed_decode_expression(item, schema)
+        ),
         ty if is_byte_vec(ty) => "decoder.bytes_borrowed()?".into(),
         Type::Vec(_) => "decoder.borrowed_vec()?".into(),
         Type::Map(_, _) => "decoder.borrowed_map()?".into(),
@@ -914,8 +919,19 @@ fn borrowed_skip_statement(ty: &Type, schema: &Schema) -> String {
     match ty {
         Type::Primitive(name) if name == "String" => "decoder.skip_string()?;".into(),
         Type::FixedBytes(length) => format!("decoder.skip_fixed_bytes({length})?;"),
+        Type::Optional(_) => format!(
+            "let _: {} = typikon::WireCodec::decode(decoder)?;",
+            rust_type(ty)
+        ),
         ty if is_byte_vec(ty) => "decoder.skip_bytes()?;".into(),
-        Type::Vec(item) => format!("decoder.skip_vec::<{}>()?;", borrowed_type(item, schema)),
+        Type::Vec(item) => {
+            let item_type = if matches!(item.as_ref(), Type::Optional(_)) {
+                rust_type(item)
+            } else {
+                borrowed_type(item, schema)
+            };
+            format!("decoder.skip_vec::<{}>()?;", item_type)
+        }
         Type::Map(key, value) => format!(
             "decoder.skip_map::<{}, {}>()?;",
             borrowed_type(key, schema),
@@ -936,11 +952,19 @@ fn borrowed_type(ty: &Type, schema: &Schema) -> String {
     match ty {
         Type::Primitive(name) if name == "String" => "&'a str".into(),
         Type::FixedBytes(_) => "&'a [u8]".into(),
+        Type::Optional(item) => format!("Option<{}>", borrowed_type(item, schema)),
         ty if is_byte_vec(ty) => "&'a [u8]".into(),
         Type::Primitive(name) if named_needs_borrowed(name, schema, &mut Vec::new()) => {
             format!("{name}Ref<'a>")
         }
-        Type::Vec(item) => format!("typikon::BorrowedVec<'a, {}>", borrowed_type(item, schema)),
+        Type::Vec(item) => {
+            let item_type = if matches!(item.as_ref(), Type::Optional(_)) {
+                rust_type(item)
+            } else {
+                borrowed_type(item, schema)
+            };
+            format!("typikon::BorrowedVec<'a, {}>", item_type)
+        }
         Type::Map(key, value) => format!(
             "typikon::BorrowedMap<'a, {}, {}>",
             borrowed_type(key, schema),
@@ -973,6 +997,7 @@ fn borrowed_type_needs(ty: &Type, schema: &Schema, visiting: &mut Vec<String>) -
     match ty {
         Type::Primitive(name) if name == "String" => true,
         Type::FixedBytes(_) => true,
+        Type::Optional(item) => borrowed_type_needs(item, schema, visiting),
         ty if is_byte_vec(ty) => true,
         Type::Primitive(name) => named_needs_borrowed(name, schema, visiting),
         Type::Vec(_) | Type::Map(_, _) => true,
@@ -1013,6 +1038,7 @@ fn rust_type(ty: &Type) -> String {
             other => other.into(),
         },
         Type::FixedBytes(length) => format!("[u8; {length}]"),
+        Type::Optional(item) => format!("Option<{}>", rust_type(item)),
         Type::Vec(item) => format!("Vec<{}>", rust_type(item)),
         Type::Map(key, value) => format!(
             "std::collections::BTreeMap<{}, {}>",

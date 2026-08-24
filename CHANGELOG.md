@@ -6,6 +6,8 @@ All notable changes to Typikon since its initial public beta are documented here
 
 ### Added
 
+- Added schema-level `Optional<T>` with local `0/1` presence markers, collection composition, and Rust/Go/TypeScript/Python backend generation.
+
 - Added intuitive CLI help at global and command levels (`--help`/`-h`), plus `--version` and clearer usage errors.
 - Added explicit `generate backend`, `generate public`, and `generate all` commands; removed the ambiguous legacy `compile` alias.
 - Public `.typ` artifacts can now be recompiled using their original Layer-based artifact names without selecting language backends.

@@ -230,6 +230,21 @@ mod tests {
     }
 
     #[test]
+    fn parses_optional_and_includes_it_in_canonical_form() {
+        let schema = parse_schema(
+            "#[version(1)] struct Profile { bio: Optional<String>, values: Vec<Optional<u64>>, }",
+        )
+        .unwrap();
+        let Item::Struct(profile) = &schema.items[0] else {
+            panic!("expected struct");
+        };
+        assert_eq!(
+            canonical_form(profile),
+            "Profile|bio:Optional<String>|values:Vec<Optional<u64>>"
+        );
+    }
+
+    #[test]
     fn accepts_optional_trailing_commas_in_flags_and_enums() {
         assert!(
             parse_schema("#[version(1)] #[flags(u16)] enum F { Ready = 0 } enum E { Value = 0 }")

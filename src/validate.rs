@@ -142,6 +142,12 @@ fn validate_type(ty: &Type, schema: &Schema) -> Result<(), ParseError> {
         Type::Primitive(_) => Err(error("unknown type")),
         Type::FixedBytes(length) if *length > 0 => Ok(()),
         Type::FixedBytes(_) => Err(error("fixed byte length must be greater than zero")),
+        Type::Optional(item) => {
+            if matches!(item.as_ref(), Type::Optional(_)) {
+                return Err(error("nested Optional is not supported"));
+            }
+            validate_type(item, schema)
+        }
         Type::Vec(item) => validate_type(item, schema),
         Type::Map(key, value) => {
             if !matches!(key.as_ref(), Type::Primitive(name) if is_map_key_type(name)) {

@@ -118,6 +118,7 @@ fn type_signature(ty: &Type) -> String {
     match ty {
         Type::Primitive(name) => name.clone(),
         Type::FixedBytes(length) => format!("bytes[{length}]"),
+        Type::Optional(item) => format!("Optional<{}>", type_signature(item)),
         Type::Vec(item) => format!("Vec<{}>", type_signature(item)),
         Type::Map(key, value) => format!("Map<{},{}>", type_signature(key), type_signature(value)),
     }

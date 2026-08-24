@@ -773,6 +773,32 @@ impl WireCodec for String {
     }
 }
 
+/// Optional values are encoded locally: `0` for None, `1` followed by T for Some.
+/// This keeps Optional composable inside collections without synthetic schema fields.
+impl<T: WireCodec> WireCodec for Option<T> {
+    fn encode(&self, encoder: &mut Encoder) -> Result<(), WireError> {
+        match self {
+            Some(value) => {
+                encoder.u8(1)?;
+                value.encode(encoder)
+            }
+            None => encoder.u8(0),
+        }
+    }
+
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, WireError> {
+        match decoder.u8()? {
+            0 => Ok(None),
+            1 => Ok(Some(T::decode(decoder)?)),
+            _ => Err(WireError::MalformedConstructor),
+        }
+    }
+
+    fn encoded_len(&self) -> usize {
+        1 + self.as_ref().map_or(0, WireCodec::encoded_len)
+    }
+}
+
 impl<T: WireCodec> WireCodec for Vec<T> {
     fn encode(&self, encoder: &mut Encoder) -> Result<(), WireError> {
         encoder.varint(self.len() as u64)?;
@@ -973,6 +999,22 @@ mod tests {
         assert_eq!(decoder.i32().unwrap(), -42);
         assert_eq!(decoder.bytes().unwrap(), b"hello");
         assert!(decoder.is_finished());
+    }
+
+    #[test]
+    fn optional_values_use_local_presence_markers_and_compose_in_vectors() {
+        let value = vec![Some("yes".to_owned()), None, Some("no".to_owned())];
+        let encoded = crate::encode_value(&value).unwrap();
+        assert_eq!(encoded[0], 3);
+        assert_eq!(encoded[1], 1);
+        assert_eq!(
+            crate::decode_value::<Vec<Option<String>>>(&encoded).unwrap(),
+            value
+        );
+        assert_eq!(
+            crate::decode_value::<Option<String>>(&[2]),
+            Err(WireError::MalformedConstructor)
+        );
     }
 
     #[test]

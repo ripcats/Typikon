@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
     process::ExitCode,
 };
-use typikon::{PublicSchemaFormat, compile_schema_with_format};
+use typikon::{PublicSchemaFormat, compile_schema_with_options};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Target {
@@ -71,7 +71,7 @@ fn print_help() {
 USAGE:\n  typikon <COMMAND> [OPTIONS]\n\n\
 COMMANDS:\n  check <SCHEMA>      Validate a schema without writing files\n  generate <KIND>     Generate backend, public, or all artifacts\n  help                Show this help\n\n\
 GENERATE KINDS:\n  backend             Rust and selected language backends only\n  public              Public .typ schema only\n  all                 Backends and public schema\n\n\
-OPTIONS:\n  --out-dir <DIR>     Output directory (default: current directory)\n  --target <LIST>     Add language backends: python, golang, typescript\n  --public-format <F> expanded (default) or compact\n  -h, --help          Show command help\n\n\
+OPTIONS:\n  --out-dir <DIR>     Output directory (default: current directory)\n  --target <LIST>     Add language backends: python, golang, typescript\n  --public-format <F> expanded (default) or compact\n  --preserve-comments Copy source comments into the public schema\n  -h, --help          Show command help\n\n\
 EXAMPLES:\n  typikon check examples/messenger.typ\n  typikon generate backend examples/messenger.typ --target python,golang,typescript\n  typikon generate public examples/messenger.typ --out-dir /tmp/public\n  typikon generate all examples/messenger-10.public.typ --out-dir /tmp/all\n"
     );
 }
@@ -82,7 +82,7 @@ fn print_command_help(command: &str) {
             "Validate a Typikon schema.\n\nUSAGE:\n  typikon check <SCHEMA>\n\nEXAMPLE:\n  typikon check examples/messenger.typ"
         ),
         "generate" => println!(
-            "Generate selected Typikon artifacts.\n\nUSAGE:\n  typikon generate <KIND> <SCHEMA> [OPTIONS]\n\nKINDS:\n  backend             Rust and selected language backends only\n  public              Public .typ schema only\n  all                 Backend and public artifacts\n\nOPTIONS:\n  --out-dir <DIR>     Output directory (default: current directory)\n  --target <LIST>     python, golang, or typescript (backend/all)\n  --public-format <F> expanded (default) or compact (public/all)\n  -h, --help          Show this help\n"
+            "Generate selected Typikon artifacts.\n\nUSAGE:\n  typikon generate <KIND> <SCHEMA> [OPTIONS]\n\nKINDS:\n  backend             Rust and selected language backends only\n  public              Public .typ schema only\n  all                 Backend and public artifacts\n\nOPTIONS:\n  --out-dir <DIR>     Output directory (default: current directory)\n  --target <LIST>     python, golang, or typescript (backend/all)\n  --public-format <F> expanded (default) or compact (public/all)\n  --preserve-comments Copy source comments into the public schema\n  -h, --help          Show this help\n"
         ),
         _ => print_help(),
     }
@@ -144,6 +144,7 @@ fn main() -> ExitCode {
     let mut out_dir = PathBuf::from(".");
     let mut targets = Vec::new();
     let mut public_format = PublicSchemaFormat::Expanded;
+    let mut preserve_comments = false;
     while let Some(argument) = args.next() {
         if matches!(argument.as_str(), "-h" | "--help") {
             print_command_help(&command);
@@ -173,6 +174,8 @@ fn main() -> ExitCode {
                 return ExitCode::from(2);
             };
             public_format = format;
+        } else if argument == "--preserve-comments" {
+            preserve_comments = true;
         } else {
             eprintln!("unknown argument: {argument}");
             return ExitCode::from(2);
@@ -190,13 +193,22 @@ fn main() -> ExitCode {
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or(&input);
-    let artifacts = match compile_schema_with_format(&source, name, public_format) {
-        Ok(artifacts) => artifacts,
-        Err(error) => {
-            eprintln!("{} at byte {}", error.message, error.position);
-            return ExitCode::from(1);
+    let artifacts =
+        match compile_schema_with_options(&source, name, public_format, preserve_comments) {
+            Ok(artifacts) => artifacts,
+            Err(error) => {
+                eprintln!("{} at byte {}", error.message, error.position);
+                return ExitCode::from(1);
+            }
+        };
+    if matches!(mode, Some(GenerateMode::Public | GenerateMode::All)) && !preserve_comments {
+        let schema = typikon::parse_schema(&source).expect("schema already validated");
+        if !schema.comments.is_empty() {
+            eprintln!(
+                "warning: source comments were not copied; use --preserve-comments to include them"
+            );
         }
-    };
+    }
     match command.as_str() {
         "check" => {
             println!("valid Layer {}: {}", artifacts.layer, name);

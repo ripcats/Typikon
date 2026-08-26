@@ -44,8 +44,25 @@ pub fn generate_public_schema_compact(schema: &Schema) -> String {
 }
 
 pub fn generate_public_schema_with_format(schema: &Schema, format: PublicSchemaFormat) -> String {
+    generate_public_schema_with_options(schema, format, false)
+}
+
+pub fn generate_public_schema_with_options(
+    schema: &Schema,
+    format: PublicSchemaFormat,
+    preserve_comments: bool,
+) -> String {
     let mut output = format!("#[version({})]\n\n", schema.version);
-    for item in &schema.items {
+    for (index, item) in schema.items.iter().enumerate() {
+        if preserve_comments && let Some(comments) = schema.item_comments.get(index) {
+            for comment in comments {
+                output.push_str(comment);
+                output.push('\n');
+            }
+            if !comments.is_empty() {
+                output.push('\n');
+            }
+        }
         match item {
             Item::Alias(alias) => {
                 let exact_len = alias
@@ -182,6 +199,15 @@ pub fn generate_public_schema_with_format(schema: &Schema, format: PublicSchemaF
                     }
                     output.push_str("}\n\n");
                 }
+            }
+        }
+    }
+    if preserve_comments {
+        let assigned = schema.item_comments.iter().flatten().count();
+        if assigned < schema.comments.len() {
+            for comment in &schema.comments[assigned..] {
+                output.push_str(comment);
+                output.push('\n');
             }
         }
     }
@@ -1363,5 +1389,20 @@ mod tests {
         let public = generate_public_schema(&schema);
         assert!(!public.contains("comment"));
         assert!(public.contains("value: u8"));
+    }
+
+    #[test]
+    fn comments_can_be_emitted_when_explicitly_requested() {
+        let schema =
+            parse_schema(
+                "#[version(1)] // schema note\nstruct A { value: u8, }\n// second\nstruct B { value: u16, } // trailing",
+            )
+            .unwrap();
+        let public =
+            generate_public_schema_with_options(&schema, PublicSchemaFormat::Expanded, true);
+        assert!(public.find("// schema note").unwrap() < public.find("struct A").unwrap());
+        assert!(public.find("struct A").unwrap() < public.find("// second").unwrap());
+        assert!(public.find("// second").unwrap() < public.find("struct B").unwrap());
+        assert!(public.contains("// trailing"));
     }
 }

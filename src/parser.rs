@@ -7,6 +7,7 @@ pub fn parse_schema(source: &str) -> Result<Schema, ParseError> {
         source,
         position: 0,
         trivia_error: None,
+        comments: Vec::new(),
     }
     .parse_schema()?;
     crate::validate::validate(&schema)?;
@@ -17,6 +18,7 @@ struct Parser<'a> {
     source: &'a str,
     position: usize,
     trivia_error: Option<usize>,
+    comments: Vec<String>,
 }
 
 impl<'a> Parser<'a> {
@@ -29,8 +31,14 @@ impl<'a> Parser<'a> {
         })?;
         self.expect(")]")?;
         let mut items = Vec::new();
-        while !self.eof() {
+        let mut item_comments = Vec::new();
+        loop {
+            let comment_start = self.comments.len();
+            if self.eof() {
+                break;
+            }
             items.push(self.parse_item()?);
+            item_comments.push(self.comments[comment_start..].to_vec());
         }
         if let Some(position) = self.trivia_error {
             return Err(ParseError {
@@ -38,7 +46,12 @@ impl<'a> Parser<'a> {
                 position,
             });
         }
-        Ok(Schema { version, items })
+        Ok(Schema {
+            version,
+            items,
+            comments: self.comments,
+            item_comments,
+        })
     }
 
     fn parse_item(&mut self) -> Result<Item, ParseError> {
@@ -319,15 +332,23 @@ impl<'a> Parser<'a> {
                 }
             }
             if self.source[self.position..].starts_with("//") {
+                let start = self.position;
                 while self.position < self.source.len()
                     && self.source.as_bytes()[self.position] != b'\n'
                 {
                     self.position += 1;
                 }
+                self.comments
+                    .push(self.source[start..self.position].trim().to_owned());
             } else if self.source[self.position..].starts_with("/*") {
                 let start = self.position;
                 let comment_start = self.position + 2;
                 if let Some(end) = self.source[comment_start..].find("*/") {
+                    self.comments.push(
+                        self.source[self.position..comment_start + end + 2]
+                            .trim()
+                            .to_owned(),
+                    );
                     self.position = comment_start + end + 2;
                 } else {
                     self.trivia_error = Some(start);

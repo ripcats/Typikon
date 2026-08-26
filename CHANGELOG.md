@@ -7,6 +7,7 @@ All notable changes to Typikon since its initial public beta are documented here
 ### Added
 
 - Added alias-level `#[exact_len(N)]` constraints for length-prefixed `Vec<u8>` aliases, including schema fingerprints, public artifacts, compatibility checks, and generated backends.
+- Added opt-in source-comment transfer to public schemas via `--preserve-comments`, with an English warning when comments are omitted.
 
 - Added schema-level `Optional<T>` with local `0/1` presence markers, collection composition, and Rust/Go/TypeScript/Python backend generation.
 

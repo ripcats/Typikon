@@ -2347,6 +2347,13 @@ pub fn generate_bridge(schema: &Schema, native_file: &str, kind: BridgeKind) -> 
                     format!("let mut decoder = typikon::Decoder::new(input, typikon::DEFAULT_MAX_PACKET_SIZE).map_err(|error| PyValueError::new_err(format!(\"{{error:?}}\")))?; let value: {native_name} = typikon::WireCodec::decode(&mut decoder).map_err(|error| PyValueError::new_err(format!(\"{{error:?}}\")))?; if value.len() != {length} {{ return Err(PyValueError::new_err(\"invalid exact length\")); }} if !decoder.is_finished() {{ return Err(PyValueError::new_err(\"trailing bytes\")); }}"),
                     "&value".to_owned(),
                 )
+            } else if matches!(item, Item::Alias(alias) if is_bytes_type(&alias.ty)) {
+                (
+                    format!("let value: {native_name} = pythonize::depythonize(value).map_err(|error| PyValueError::new_err(error.to_string()))?;"),
+                    "let mut encoder = typikon::Encoder::new(typikon::DEFAULT_MAX_PACKET_SIZE); typikon::WireCodec::encode(&value, &mut encoder).map_err(|error| PyValueError::new_err(format!(\"{error:?}\")))?; encoder.finish().map_err(|error| PyValueError::new_err(format!(\"{error:?}\")))".to_owned(),
+                    format!("let mut decoder = typikon::Decoder::new(input, typikon::DEFAULT_MAX_PACKET_SIZE).map_err(|error| PyValueError::new_err(format!(\"{{error:?}}\")))?; let value: {native_name} = typikon::WireCodec::decode(&mut decoder).map_err(|error| PyValueError::new_err(format!(\"{{error:?}}\")))?; if !decoder.is_finished() {{ return Err(PyValueError::new_err(\"trailing bytes\")); }}"),
+                    "&value".to_owned(),
+                )
             } else if matches!(item, Item::Flags(_)) {
                 (
                     format!("let value: {native_name} = pythonize::depythonize(value).map_err(|error| PyValueError::new_err(error.to_string()))?;"),
@@ -2517,6 +2524,16 @@ mod tests {
         let rust = crate::codegen::generate_rust(&schema);
         assert!(rust.contains("__typikon_fixed_bytes_16"));
         assert!(rust.contains("__typikon_fixed_bytes_16\")]"));
+    }
+
+    #[test]
+    fn python_bridge_uses_wire_codec_for_byte_vector_aliases() {
+        let schema =
+            parse_schema("#[version(10)] type RpcData = Vec<u8>; struct Packet { data: RpcData, }")
+                .unwrap();
+        let python = generate_bridge(&schema, "packet-10.rs", BridgeKind::Python);
+        assert!(python.contains("let value: packet_10::RpcData"));
+        assert!(python.contains("typikon::WireCodec::encode(&value"));
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use crate::{
     BridgeKind, ParseError, PublicSchemaFormat, generate_bridge, generate_c_header,
-    generate_go_binding, generate_public_schema_with_format, generate_python_binding,
-    generate_rust, generate_typescript_binding, parse_schema,
+    generate_go_binding, generate_python_binding, generate_rust, generate_typescript_binding,
+    parse_schema,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +32,15 @@ pub fn compile_schema_with_format(
     schema_name: &str,
     public_format: PublicSchemaFormat,
 ) -> Result<GeneratedArtifacts, ParseError> {
+    compile_schema_with_options(source, schema_name, public_format, false)
+}
+
+pub fn compile_schema_with_options(
+    source: &str,
+    schema_name: &str,
+    public_format: PublicSchemaFormat,
+    preserve_comments: bool,
+) -> Result<GeneratedArtifacts, ParseError> {
     let schema = parse_schema(source)?;
     let name = schema_name.strip_suffix(".typ").unwrap_or(schema_name);
     let name = name.strip_suffix(".public").unwrap_or(name);
@@ -48,7 +57,11 @@ pub fn compile_schema_with_format(
         rust_file_name,
         public_schema_file_name: format!("{name}-{}.public.typ", schema.version),
         rust_source: generate_rust(&schema),
-        public_schema: generate_public_schema_with_format(&schema, public_format),
+        public_schema: crate::generate_public_schema_with_options(
+            &schema,
+            public_format,
+            preserve_comments,
+        ),
         bridge_file_names,
         bridge_sources,
         bridge_header_name: format!("{}-{}.h", name, schema.version),

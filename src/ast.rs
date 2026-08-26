@@ -2,6 +2,8 @@
 pub struct Schema {
     pub version: u16,
     pub items: Vec<Item>,
+    pub comments: Vec<String>,
+    pub item_comments: Vec<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

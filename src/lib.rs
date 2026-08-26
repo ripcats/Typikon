@@ -16,7 +16,9 @@ mod parser;
 mod validate;
 mod wire;
 
-pub use artifacts::{GeneratedArtifacts, compile_schema, compile_schema_with_format};
+pub use artifacts::{
+    GeneratedArtifacts, compile_schema, compile_schema_with_format, compile_schema_with_options,
+};
 pub use ast::{Enum, EnumVariant, Field, Flags, FlagsBit, Item, Schema, Struct, Type};
 pub use bridge::{
     BridgeKind, generate_bridge, generate_c_header, generate_go_binding, generate_python_binding,
@@ -28,7 +30,7 @@ pub use codec::{
 };
 pub use codegen::{
     PublicSchemaFormat, generate_public_schema, generate_public_schema_compact,
-    generate_public_schema_with_format, generate_rust,
+    generate_public_schema_with_format, generate_public_schema_with_options, generate_rust,
 };
 pub use compatibility::{CompatibilityError, is_backward_compatible};
 pub use constructor::CID_BYTES;

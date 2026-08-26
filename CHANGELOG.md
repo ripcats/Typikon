@@ -2,7 +2,7 @@
 
 All notable changes to Typikon since its initial public beta are documented here.
 
-## 0.3.1 — Unreleased
+## 0.3.2 — 2026-08-26
 
 ### Added
 

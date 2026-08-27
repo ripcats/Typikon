@@ -28,7 +28,20 @@ pub fn generate_rust(schema: &Schema) -> String {
         output.push('\n');
     }
     if !schema.functions.is_empty() {
-        output.push_str("pub mod methods {\n");
+        output.push_str("pub mod methods {\n    #[derive(Debug, Clone, Copy, PartialEq, Eq)]\n    pub struct Descriptor { pub name: &'static str, pub request: &'static str, pub result: &'static str, pub deprecated: Option<&'static str> }\n\n");
+        output.push_str("    pub const DESCRIPTORS: &[Descriptor] = &[\n");
+        for function in &schema.functions {
+            let deprecated = function
+                .deprecated
+                .as_ref()
+                .map(|message| format!("Some(\"{message}\")"))
+                .unwrap_or_else(|| "None".into());
+            output.push_str(&format!(
+                "        Descriptor {{ name: \"{}\", request: \"{}\", result: \"{}\", deprecated: {} }},\n",
+                function.name, function.request, function.result, deprecated
+            ));
+        }
+        output.push_str("    ];\n\n");
         for function in &schema.functions {
             let constant = function.name.replace('.', "_").to_ascii_uppercase();
             let snake = function.name.replace('.', "_");
@@ -38,7 +51,52 @@ pub fn generate_rust(schema: &Schema) -> String {
             ));
             output.push_str(&format!("    pub const {constant}_REQUEST_TYPE: &str = \"{}\";\n    pub const {constant}_RESULT_TYPE: &str = \"{}\";\n", function.request, function.result));
             output.push_str(&format!("    pub fn encode_{snake}_request(value: &super::{}) -> Result<Vec<u8>, typikon::WireError> {{ typikon::encode_value(value) }}\n    pub fn decode_{snake}_response(bytes: &[u8]) -> Result<super::{}, typikon::WireError> {{ typikon::decode_value(bytes) }}\n", function.request, function.result));
+            output.push_str(&format!("    pub async fn call_{snake}<T: typikon::RpcTransport>(client: &typikon::RpcClient<T>, request: &super::{}) -> Result<super::{}, typikon::RpcError<T::Error>> {{ client.call(\"{}\", request).await }}\n", function.request, function.result, function.name));
         }
+        let mut services = BTreeSet::new();
+        for function in &schema.functions {
+            services.insert(
+                function
+                    .name
+                    .split('.')
+                    .next()
+                    .unwrap_or_default()
+                    .to_owned(),
+            );
+        }
+        for service in &services {
+            let service_type = format!("{}Api", rust_type_name(service));
+            output.push_str(&format!("\n    pub struct {service_type}<'a, T: typikon::RpcTransport> {{ client: &'a typikon::RpcClient<T> }}\n    impl<'a, T: typikon::RpcTransport> {service_type}<'a, T> {{\n"));
+            for function in schema
+                .functions
+                .iter()
+                .filter(|function| function.name.starts_with(&format!("{service}.")))
+            {
+                let method = snake_case(function.name.split('.').nth(1).unwrap_or_default());
+                if let Some(message) = &function.deprecated {
+                    output.push_str(&format!("        #[deprecated(note = \"{message}\")]\n"));
+                }
+                output.push_str(&format!("        pub async fn {method}(&self, request: &super::{}) -> Result<super::{}, typikon::RpcError<T::Error>> {{ self.client.call(\"{}\", request).await }}\n", function.request, function.result, function.name));
+            }
+            output.push_str("    }\n");
+        }
+        output.push_str("\n    pub struct Api<'a, T: typikon::RpcTransport> {\n");
+        for service in &services {
+            output.push_str(&format!(
+                "        pub {}: {}Api<'a, T>,\n",
+                snake_case(service),
+                rust_type_name(service)
+            ));
+        }
+        output.push_str("    }\n    impl<'a, T: typikon::RpcTransport> Api<'a, T> {\n        pub fn new(client: &'a typikon::RpcClient<T>) -> Self { Self {\n");
+        for service in &services {
+            output.push_str(&format!(
+                "            {}: {}Api {{ client }},\n",
+                snake_case(service),
+                rust_type_name(service)
+            ));
+        }
+        output.push_str("        } }\n    }\n");
         output.push_str("}\n\n");
     }
     output
@@ -315,6 +373,31 @@ fn schema_type(ty: &Type) -> String {
     }
 }
 
+fn snake_case(name: &str) -> String {
+    name.chars()
+        .enumerate()
+        .map(|(index, character)| {
+            if character.is_ascii_uppercase() && index > 0 {
+                format!("_{}", character.to_ascii_lowercase())
+            } else {
+                character.to_ascii_lowercase().to_string()
+            }
+        })
+        .collect()
+}
+
+fn rust_type_name(name: &str) -> String {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) => format!(
+            "{}{}",
+            first.to_ascii_uppercase(),
+            chars.collect::<String>()
+        ),
+        None => "Api".into(),
+    }
+}
+
 fn generate_struct(item: &Struct, schema: &Schema, output: &mut String) {
     let cid = item
         .cid
@@ -330,6 +413,9 @@ fn generate_struct(item: &Struct, schema: &Schema, output: &mut String) {
     output.push_str("#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\n");
     output.push_str(&format!("pub struct {} {{\n", item.name));
     for field in &item.fields {
+        if let Some(message) = &field.deprecated {
+            output.push_str(&format!("    #[deprecated(note = \"{message}\")]\n"));
+        }
         output.push_str(&format!(
             "    {}pub {}: {},\n",
             serde_field_attribute(field, schema),
@@ -1458,7 +1544,11 @@ mod tests {
         let rust = generate_rust(&schema);
         assert!(rust.contains("pub const USER_CREATE: &str = \"user.create\";"));
         assert!(rust.contains("USER_CREATE_REQUEST_TYPE"));
+        assert!(rust.contains("pub const DESCRIPTORS: &[Descriptor]"));
         assert!(rust.contains("fn encode_user_create_request"));
+        assert!(rust.contains("pub struct UserApi<'a, T: typikon::RpcTransport>"));
+        assert!(rust.contains("pub async fn create"));
+        assert!(rust.contains("pub struct Api<'a, T: typikon::RpcTransport>"));
         assert!(generate_public_schema(&schema).contains("functions {"));
     }
 

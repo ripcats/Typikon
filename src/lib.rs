@@ -13,13 +13,30 @@ mod fingerprint;
 mod layer;
 mod limits;
 mod parser;
+mod rpc;
 mod validate;
 mod wire;
 
 pub use artifacts::{
     GeneratedArtifacts, compile_schema, compile_schema_with_format, compile_schema_with_options,
 };
-pub use ast::{Enum, EnumVariant, Field, Flags, FlagsBit, Function, Item, Schema, Struct, Type};
+pub use ast::{
+    Enum, EnumVariant, Field, Flags, FlagsBit, Function, FunctionDescriptor, Item, Schema, Struct,
+    Type,
+};
+
+pub fn function_descriptors(schema: &Schema) -> Vec<FunctionDescriptor> {
+    schema
+        .functions
+        .iter()
+        .map(|function| FunctionDescriptor {
+            name: function.name.clone(),
+            request: function.request.clone(),
+            result: function.result.clone(),
+            deprecated: function.deprecated.clone(),
+        })
+        .collect()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FunctionDispatchError {
@@ -75,6 +92,7 @@ pub use limits::{
     DecodeLimits, MAX_BYTES_FIELD_SIZE, MAX_COLLECTION_ITEMS, MAX_NESTING_DEPTH, MAX_PACKET_SIZE,
 };
 pub use parser::parse_schema;
+pub use rpc::{RpcClient, RpcError, RpcFuture, RpcTransport};
 pub use validate::validate;
 pub use wire::{
     BorrowedMap, BorrowedMapIter, BorrowedVec, BorrowedVecIter, BorrowedWireCodec, Decoder,
@@ -124,6 +142,38 @@ mod tests {
             Err(FunctionDispatchError::Unknown { .. })
         ));
         assert!(validate_function_dispatch(&schema, &["user.create", "user.delete"]).is_ok());
+    }
+
+    #[test]
+    fn parses_deprecated_fields_and_functions() {
+        let schema = parse_schema(
+            "#[version(1)] struct Document { #[deprecated(\"use title\")] label: String, title: String, } functions { #[deprecated(\"use document.get\")] document.fetchLegacy: Empty -> Document }",
+        )
+        .unwrap();
+        let Item::Struct(document) = &schema.items[0] else {
+            panic!()
+        };
+        assert_eq!(document.fields[0].deprecated.as_deref(), Some("use title"));
+        assert_eq!(
+            schema.functions[0].deprecated.as_deref(),
+            Some("use document.get")
+        );
+    }
+
+    #[test]
+    fn exposes_function_descriptors_without_wire_metadata() {
+        let schema = parse_schema(
+            "#[version(1)] functions { #[deprecated(\"use health.check\")] health.legacy: Empty -> Empty; health.check: Empty -> Empty }",
+        )
+        .unwrap();
+        let descriptors = function_descriptors(&schema);
+        assert_eq!(descriptors.len(), 2);
+        assert_eq!(descriptors[0].name, "health.legacy");
+        assert_eq!(
+            descriptors[0].deprecated.as_deref(),
+            Some("use health.check")
+        );
+        assert_eq!(descriptors[1].result, "Empty");
     }
 
     #[test]

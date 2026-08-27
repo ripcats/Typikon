@@ -1,6 +1,7 @@
 use crate::codegen::{borrowed_view_name, fixed_byte_length};
 use crate::fingerprint::{constructor_cid_with_schema, variant_cid_with_schema};
 use crate::{Item, Schema, Type};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BridgeKind {
@@ -111,6 +112,57 @@ func bridgePtr(data []byte) *C.uint8_t { if len(data)==0 { return nil }; return 
     output.push_str("func wireBytesCompare(a,b []byte) int { for i:=0;i<len(a)&&i<len(b);i++ { if a[i]<b[i] { return -1 }; if a[i]>b[i] { return 1 } }; if len(a)<len(b) { return -1 }; if len(a)>len(b) { return 1 }; return 0 }\n");
     for item in &schema.items {
         generate_go_item(item, schema, &mut output);
+    }
+    if !schema.functions.is_empty() {
+        output.push_str("\ntype Empty struct{}\nfunc encode_empty(e *wireEncoder, _ Empty) {}\nfunc decode_empty(d *wireDecoder) (Empty,error) { if d.p != len(d.b) { return Empty{}, fmt.Errorf(\"expected empty response\") }; return Empty{}, nil }\ntype RpcCaller interface { Call(method string, request []byte) ([]byte, error) }\n");
+        output.push_str("\ntype FunctionDescriptor struct { Name string; Request string; Result string }\nvar FunctionCatalog = []FunctionDescriptor{\n");
+        for function in &schema.functions {
+            let constant = function.name.replace('.', "_").to_ascii_uppercase();
+            output.push_str(&format!("const {constant} = \"{}\"\n", function.name));
+            output.push_str(&format!(
+                "    {{Name: \"{}\", Request: \"{}\", Result: \"{}\"}},\n",
+                function.name, function.request, function.result
+            ));
+        }
+        output.push_str("}\n");
+        let mut services = BTreeMap::<String, Vec<&crate::Function>>::new();
+        for function in &schema.functions {
+            let (service, _) = function.name.split_once('.').unwrap();
+            services
+                .entry(service.to_owned())
+                .or_default()
+                .push(function);
+        }
+        for (service, functions) in &services {
+            let service_type = format!("{}API", pascal_case(service));
+            output.push_str(&format!(
+                "type {service_type} struct {{ call RpcCaller }}\n"
+            ));
+            for function in functions {
+                let (_, method) = function.name.split_once('.').unwrap();
+                let method_name = pascal_case(method);
+                let request_encode = format!("encode_{}", snake_case(&function.request));
+                let result_decode = format!("decode_{}", snake_case(&function.result));
+                output.push_str(&format!("func (a *{service_type}) {method_name}(request {request}) ({result}, error) {{ e := &wireEncoder{{}}; {request_encode}(e, request); encoded, err := e.finish(); if err != nil {{ return {zero}, err }}; response, err := a.call.Call({constant}, encoded); if err != nil {{ return {zero}, err }}; d := &wireDecoder{{b: response}}; value, err := {result_decode}(d); if err != nil {{ return {zero}, err }}; if err = d.done(); err != nil {{ return {zero}, err }}; return value, nil }}\n", service_type=service_type, method_name=method_name, request=go_type_name(&function.request), result=go_type_name(&function.result), request_encode=request_encode, result_decode=result_decode, constant=function.name.replace('.', "_").to_ascii_uppercase(), zero=go_zero_value(&function.result, schema)));
+            }
+        }
+        output.push_str("type API struct {\n");
+        for service in services.keys() {
+            output.push_str(&format!(
+                "    {} *{}API\n",
+                pascal_case(service),
+                pascal_case(service)
+            ));
+        }
+        output.push_str("}\nfunc NewAPI(call RpcCaller) *API { return &API{\n");
+        for service in services.keys() {
+            output.push_str(&format!(
+                "    {}: &{}API{{call: call}},\n",
+                pascal_case(service),
+                pascal_case(service)
+            ));
+        }
+        output.push_str("} }\n");
     }
     output
 }
@@ -1077,6 +1129,15 @@ pub fn generate_typescript_binding(schema: &Schema) -> String {
         .replace("class WireDecoder {", "export class WireDecoder {")
         .replace("constructor(private readonly b: Uint8Array) {} take(n: number): Uint8Array", "constructor(private readonly b: Uint8Array, p = 0) { this.p = p; } position(): number { return this.p; } take(n: number): Uint8Array")
         .replace("done(): void { if (this.p !== this.b.length)", "seek(position: number): void { if (position < 0 || position > this.b.length) throw new Error('invalid decoder position'); this.p = position; } done(): void { if (this.p !== this.b.length)");
+    output = output
+        .replace(
+            "u64(v: bigint): void { let n = BigInt.asUintN(64, v);",
+            "u64(v: bigint | number): void { let n = BigInt.asUintN(64, BigInt(v));",
+        )
+        .replace(
+            "i64(v: bigint): void { this.u64(v); }",
+            "i64(v: bigint | number): void { this.u64(v); }",
+        );
     output.push_str("export class LazyCollection<T> { constructor(private readonly wire: Uint8Array, private readonly start: number, readonly length: number, private readonly decode: (decoder: WireDecoder) => T) {} at(index: number): T { if (!Number.isInteger(index) || index < 0 || index >= this.length) throw new RangeError('collection index out of range'); const decoder = new WireDecoder(this.wire, this.start); let value!: T; for (let i = 0; i <= index; i++) value = this.decode(decoder); return value; } *[Symbol.iterator](): IterableIterator<T> { const decoder = new WireDecoder(this.wire, this.start); for (let i = 0; i < this.length; i++) yield this.decode(decoder); } }\nexport class BorrowedPacket<T> { constructor(readonly wire: Uint8Array, readonly view: T) {} }\n\n");
     output.push_str("const wireBytesCompare = (a: Uint8Array, b: Uint8Array): number => { for (let i = 0; i < Math.min(a.length, b.length); i++) { if (a[i] < b[i]) return -1; if (a[i] > b[i]) return 1; } return a.length - b.length; };\n\n");
     output = output.replace(
@@ -1103,6 +1164,37 @@ pub fn generate_typescript_binding(schema: &Schema) -> String {
         let function_name = name.to_ascii_lowercase();
         output.push_str(&format!("export function encodeBinary{name}(native: TypikonNative, wire: Uint8Array): Uint8Array {{ return native.encodeBinary({}, \"{}\", wire); }}\nexport function decodeBinary{name}(native: TypikonNative, wire: Uint8Array): Uint8Array {{ return native.decodeBinary({}, \"{}\", wire); }}\nexport function validateBinary{name}(native: TypikonNative, wire: Uint8Array): void {{ native.validateBinary({}, \"{}\", wire); }}\n\n", schema.version, function_name, schema.version, function_name, schema.version, function_name));
         generate_typescript_typed_item(item, schema, &mut output);
+    }
+    if !schema.functions.is_empty() {
+        output.push_str("export type RpcCall = (method: string, request: Uint8Array) => Promise<Uint8Array>;\nexport type Empty = undefined;\nexport function encodeEmpty(_value: Empty): Uint8Array { return new Uint8Array(); }\nexport function decodeEmpty(wire: Uint8Array): Empty { if (wire.length !== 0) throw new Error('expected empty response'); return undefined; }\n");
+        output.push_str("export interface FunctionDescriptor { name: string; request: string; result: string; }\nexport const FunctionCatalog: readonly FunctionDescriptor[] = [\n");
+        for function in &schema.functions {
+            let constant = function.name.replace('.', "_").to_ascii_uppercase();
+            output.push_str(&format!(
+                "export const {constant} = \"{}\";\n",
+                function.name
+            ));
+            output.push_str(&format!(
+                "  {{ name: \"{}\", request: \"{}\", result: \"{}\" }},\n",
+                function.name, function.request, function.result
+            ));
+        }
+        output.push_str("];\n\nexport function createApi(call: RpcCall): any {\n  return {\n");
+        for function in &schema.functions {
+            let (service, method) = function.name.split_once('.').unwrap();
+            let request = if function.request == "Empty" {
+                "new Uint8Array()".to_owned()
+            } else {
+                format!("encode{}(request)", function.request)
+            };
+            let decode = if function.result == "Empty" {
+                "decodeEmpty(response)".to_owned()
+            } else {
+                format!("decode{}(response)", function.result)
+            };
+            output.push_str(&format!("    {}: {{ {}: async (request: {}): Promise<{}> => {{ const response = await call({}, {}); return {}; }} }},\n", service, snake_case(method), function.request, function.result, function.name.replace('.', "_" ).to_ascii_uppercase(), request, decode));
+        }
+        output.push_str("  };\n}\n\n");
     }
     output
 }
@@ -2054,7 +2146,7 @@ fn typescript_named_view(name: &str, schema: &Schema) -> bool {
 
 pub fn generate_python_binding(schema: &Schema) -> String {
     let mut output = format!(
-        "# @generated by typikon; Python facade for Layer {}.\nfrom __future__ import annotations\n\nfrom typing import Any\n\n",
+        "# @generated by typikon; Python facade for Layer {}.\nfrom __future__ import annotations\n\nimport warnings\nfrom typing import Any\n\n",
         schema.version
     );
     output.push_str("from typikon_python import ");
@@ -2072,6 +2164,76 @@ pub fn generate_python_binding(schema: &Schema) -> String {
             .join(", "),
     );
     output.push_str(&format!("\n\nLAYER = {}\n\nclass BorrowedPacket:\n    __slots__ = (\"_wire\", \"type_name\")\n\n    def __init__(self, wire: bytes, type_name: str) -> None:\n        self._wire = memoryview(wire)\n        self.type_name = type_name\n\n    @property\n    def wire(self) -> memoryview:\n        return self._wire\n\n", schema.version));
+    if !schema.functions.is_empty() {
+        let mut services = BTreeMap::<String, Vec<_>>::new();
+        for function in &schema.functions {
+            let (service, method) = function.name.split_once('.').unwrap();
+            services
+                .entry(service.to_owned())
+                .or_default()
+                .push((method, function));
+        }
+        output.push_str(
+            "class _ApiNamespace:\n    def __init__(self, call):\n        self._call = call\n\n",
+        );
+        if schema
+            .functions
+            .iter()
+            .any(|function| function.result == "Empty")
+        {
+            output.push_str("def decode_empty(wire: bytes) -> None:\n    if wire:\n        raise ValueError(\"expected empty response\")\n    return None\n\n");
+        }
+        for (service, functions) in services {
+            output.push_str(&format!(
+                "class {}Api(_ApiNamespace):\n",
+                python_type_name(&service)
+            ));
+            for (method, function) in functions {
+                let method = snake_case(method);
+                let result = snake_case(&function.result);
+                let params = python_request_params(function, schema);
+                let request_expr = if params.is_empty() {
+                    "{}".to_owned()
+                } else {
+                    format!(
+                        "{{{}}}",
+                        params
+                            .iter()
+                            .map(|(arg, wire)| format!("\"{wire}\": {arg}"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                };
+                let signature = if params.is_empty() {
+                    "self".to_owned()
+                } else {
+                    format!(
+                        "self, {}",
+                        params
+                            .iter()
+                            .map(|(arg, _)| format!("{arg}: Any"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                };
+                let warning = function.deprecated.as_ref().map(|message| format!("        warnings.warn(\"{message}\", DeprecationWarning, stacklevel=2)\n")).unwrap_or_default();
+                output.push_str(&format!("    async def {method}({signature}) -> Any:\n{warning}        return await self._call(\"{}\", \"{}\", {}, decode_{result})\n\n", function.name, function.request, request_expr));
+            }
+        }
+        output.push_str("def create_api(call):\n    return type(\"TypikonApi\", (), {\n");
+        for service in schema
+            .functions
+            .iter()
+            .filter_map(|function| function.name.split_once('.').map(|x| x.0))
+            .collect::<std::collections::BTreeSet<_>>()
+        {
+            output.push_str(&format!(
+                "        \"{service}\": {}Api(call),\n",
+                python_type_name(service)
+            ));
+        }
+        output.push_str("    })()\n\n");
+    }
     for item in &schema.items {
         let name = item_name(item);
         let function_name = snake_case(item_name(item));
@@ -2098,6 +2260,53 @@ fn item_name(item: &Item) -> &str {
         Item::Enum(item) => &item.name,
         Item::Flags(item) => &item.name,
     }
+}
+
+fn python_type_name(name: &str) -> String {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) => format!(
+            "{}{}",
+            first.to_ascii_uppercase(),
+            chars.collect::<String>()
+        ),
+        None => "Api".into(),
+    }
+}
+
+fn go_type_name(name: &str) -> String {
+    name.to_owned()
+}
+
+fn go_zero_value(name: &str, schema: &Schema) -> String {
+    if name == "Empty" {
+        return "Empty{}".into();
+    }
+    match schema.items.iter().find(|item| item_name(item) == name) {
+        Some(Item::Alias(alias)) => match &alias.ty {
+            Type::Primitive(primitive) if primitive == "String" => "\"\"".into(),
+            Type::Primitive(_) => "0".into(),
+            _ => format!("{}{{}}", name),
+        },
+        Some(Item::Flags(_)) => "0".into(),
+        _ => format!("{}{{}}", name),
+    }
+}
+
+fn python_request_params(function: &crate::Function, schema: &Schema) -> Vec<(String, String)> {
+    schema
+        .items
+        .iter()
+        .find_map(|item| match item {
+            Item::Struct(item) if item.name == function.request => Some(
+                item.fields
+                    .iter()
+                    .map(|field| (snake_case(&field.name), field.name.clone()))
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .unwrap_or_default()
 }
 
 fn go_primitive(name: &str) -> &str {
@@ -2537,6 +2746,23 @@ mod tests {
     }
 
     #[test]
+    fn python_binding_generates_schema_driven_api_namespaces() {
+        let schema = parse_schema(
+            "#[version(1)] struct User { id: u64, userId: u64, } functions { users.getById: User -> User; #[deprecated(\"use users.getById\")] users.delete: User -> Empty }",
+        )
+        .unwrap();
+        let python = generate_python_binding(&schema);
+        assert!(python.contains("class UsersApi(_ApiNamespace):"));
+        assert!(python.contains("async def get_by_id(self, id: Any, user_id: Any)"));
+        assert!(python.contains("user_id: Any"));
+        assert!(python.contains("\"userId\": user_id"));
+        assert!(python.contains("\"users.getById\", \"User\""));
+        assert!(python.contains("def create_api(call):"));
+        assert!(python.contains("def decode_empty(wire: bytes)"));
+        assert!(python.contains("warnings.warn(\"use users.getById\""));
+    }
+
+    #[test]
     fn typescript_views_decode_direct_fixed_bytes_in_enum_variants() {
         let schema = parse_schema(
             "#[version(10)] enum Peer { User { user_id: u32, user_ref: bytes[24] }, }",
@@ -2585,7 +2811,7 @@ mod tests {
         let generated = generate_typescript_binding(&schema);
         assert!(generated.contains("unsigned: bigint"));
         assert!(generated.contains("signed: bigint"));
-        assert!(generated.contains("u64(v: bigint)"));
+        assert!(generated.contains("u64(v: bigint | number)"));
         assert!(generated.contains("u64(): bigint"));
         assert!(generated.contains("i64(): bigint"));
         assert!(!generated.contains("u64(): number"));
@@ -2654,6 +2880,30 @@ mod tests {
         let typescript = generate_typescript_binding(&schema);
         assert!(typescript.contains("export type Flags = number;"));
         assert!(typescript.contains("export type Event = { Created:"));
+    }
+
+    #[test]
+    fn generated_go_and_typescript_function_catalogs_match_schema_order() {
+        let schema = parse_schema(
+            "#[version(10)] struct Ping { value: u8, } functions { system.ping: Ping -> Ping; system.health: Empty -> Empty }",
+        )
+        .unwrap();
+        let go = generate_go_binding(&schema, "chat-10.h");
+        assert!(go.contains("const SYSTEM_PING = \"system.ping\""));
+        assert!(go.contains("const SYSTEM_HEALTH = \"system.health\""));
+        assert!(go.find("SYSTEM_PING").unwrap() < go.find("SYSTEM_HEALTH").unwrap());
+        assert!(go.contains("type SystemAPI struct { call RpcCaller }"));
+        assert!(go.contains("func (a *SystemAPI) Ping(request Ping) (Ping, error)"));
+        assert!(go.contains("func NewAPI(call RpcCaller) *API"));
+        let typescript = generate_typescript_binding(&schema);
+        assert!(typescript.contains("export const SYSTEM_PING = \"system.ping\";"));
+        assert!(typescript.contains("export const SYSTEM_HEALTH = \"system.health\";"));
+        assert!(
+            typescript.find("SYSTEM_PING").unwrap() < typescript.find("SYSTEM_HEALTH").unwrap()
+        );
+        assert!(typescript.contains("export function createApi(call: RpcCall): any"));
+        assert!(typescript.contains("async (request: Ping): Promise<Ping>"));
+        assert!(typescript.contains("decodeEmpty(response)"));
     }
 
     #[test]

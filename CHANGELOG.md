@@ -2,6 +2,14 @@
 
 All notable changes to Typikon since its initial public beta are documented here.
 
+## 0.4.0 — 2026-08-27
+
+### Added
+
+- Added schema-driven typed RPC API facades and ordered function catalogs for Rust, Python, Go, and TypeScript.
+- Added transport-neutral typed request/response helpers with built-in zero-payload `Empty` handling.
+- Added cross-language API generation and transport error coverage.
+
 ## 0.3.3 — 2026-08-27
 
 ### Added

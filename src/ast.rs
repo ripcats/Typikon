@@ -16,6 +16,14 @@ pub struct Function {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionDescriptor {
+    pub name: String,
+    pub request: String,
+    pub result: String,
+    pub deprecated: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Item {
     Alias(Alias),
     Struct(Struct),

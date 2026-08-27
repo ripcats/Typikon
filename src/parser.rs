@@ -45,6 +45,9 @@ impl<'a> Parser<'a> {
                 while !self.consume("}") {
                     functions.push(self.parse_function()?);
                 }
+                if !self.eof() {
+                    return self.error("functions block must be the final schema section");
+                }
                 break;
             }
             items.push(self.parse_item()?);
@@ -68,14 +71,10 @@ impl<'a> Parser<'a> {
     fn parse_function(&mut self) -> Result<Function, ParseError> {
         self.skip_trivia();
         let deprecated = self.parse_deprecated_attr()?;
-        let start = self.position;
-        while self.position < self.source.len()
-            && (self.source.as_bytes()[self.position].is_ascii_alphanumeric()
-                || matches!(self.source.as_bytes()[self.position], b'_' | b'.'))
-        {
-            self.position += 1;
-        }
-        let name = self.source[start..self.position].to_owned();
+        let service = self.identifier()?;
+        self.expect(".")?;
+        let method = self.identifier()?;
+        let name = format!("{service}.{method}");
         self.expect(":")?;
         let request = self.identifier()?;
         self.expect("->")?;

@@ -4,6 +4,15 @@ pub struct Schema {
     pub items: Vec<Item>,
     pub comments: Vec<String>,
     pub item_comments: Vec<Vec<String>>,
+    pub functions: Vec<Function>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Function {
+    pub name: String,
+    pub request: String,
+    pub result: String,
+    pub deprecated: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +70,7 @@ pub struct Field {
     pub guard: Option<String>,
     pub exact_len: Option<usize>,
     pub ty: Type,
+    pub deprecated: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

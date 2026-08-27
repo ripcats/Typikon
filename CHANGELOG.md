@@ -2,9 +2,11 @@
 
 All notable changes to Typikon since its initial public beta are documented here.
 
-## 0.3.2 — 2026-08-26
+## 0.3.3 — 2026-08-27
 
 ### Added
+
+- Added declarative RPC function definitions with typed Rust method catalogs, request/response mappings, auth metadata, built-in `Empty`, public-schema functions sections, and dispatch coverage validation.
 
 - Added alias-level `#[exact_len(N)]` constraints for length-prefixed `Vec<u8>` aliases, including schema fingerprints, public artifacts, compatibility checks, and generated backends.
 - Added opt-in source-comment transfer to public schemas via `--preserve-comments`, with an English warning when comments are omitted.

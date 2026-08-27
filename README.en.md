@@ -3,7 +3,7 @@
 ![Typikon Protocol](assets/cover.png)
 
 [![Version](https://img.shields.io/badge/Version-Beta-5865F2?style=for-the-badge&logo=github&logoColor=white)](#what-is-actually-tested)
-[![Tests](https://img.shields.io/badge/Tests-82%20Passing-3FB950?style=for-the-badge&logo=githubactions&logoColor=white)](#what-is-actually-tested)
+[![Tests](https://img.shields.io/badge/Tests-85%20Passing-3FB950?style=for-the-badge&logo=githubactions&logoColor=white)](#what-is-actually-tested)
 [![Evgeny Gerber](https://img.shields.io/badge/Evgeny%20Gerber-2AABEE?style=for-the-badge&logo=telegram&logoColor=white)](https://ripcats.t.me)
 [![Русский](https://img.shields.io/badge/%D0%A0%D1%83%D1%81%D1%81%D0%BA%D0%B8%D0%B9-2D333B?style=for-the-badge&logo=libretranslate&logoColor=white)](README.md)
 
@@ -247,6 +247,39 @@ typikon generate public schema.typ --preserve-comments
 
 Without the flag, the generator emits a short warning in English.
 
+### Declarative functions
+
+A source schema may contain a separate `functions` block. Each function declares a canonical method name, request type, and result type. `Empty` is a built-in type with a zero-byte payload.
+
+```rust
+struct Document {
+    id: u64,
+    #[deprecated("use title")]
+    label: String,
+    title: String,
+}
+
+struct GetDocumentRequest {
+    id: u64,
+}
+
+struct HealthStatus {
+    ok: bool,
+}
+
+functions {
+    health.check: Empty -> HealthStatus;
+    document.get: GetDocumentRequest -> Document;
+
+    #[deprecated("use document.get")]
+    document.fetchLegacy: GetDocumentRequest -> Document;
+}
+```
+
+Functions are not part of ordinary wire payloads and do not change structure C-IDs or fingerprints. `#[deprecated("...")]` marks a field or function as supported but discouraged for new code; SDKs can use the message as a migration hint. Functions and attributes are copied to the public schema in the same order.
+
+As with struct fields, the trailing `;` on the last function before `}` is optional.
+
 ### Structs, enums, and unit enums
 
 A `struct` describes one constructor:
@@ -352,7 +385,7 @@ Transport and application logic intentionally remain a separate layer. Typikon f
 
 ## What is actually tested
 
-The Rust suite contains **82 tests: 76 unit tests and 6 integration tests** covering parsing and semantic validation, code generation, the CLI, Layer/C-ID handling, wire round-trips, fixed byte arrays and exact-length checks, alias constraints, comments, limits, malformed input, maps, VarInt, optional markers, borrowed views, language-view generation, vectored writes, randomized inputs, and FlatBuffers round-trip comparison.
+The Rust suite contains **85 tests: 79 unit tests and 6 integration tests** covering parsing and semantic validation, code generation, the CLI, Layer/C-ID handling, wire round-trips, fixed byte arrays and exact-length checks, alias constraints, comments, functions, limits, malformed input, maps, VarInt, optional markers, borrowed views, language-view generation, vectored writes, randomized inputs, and FlatBuffers round-trip comparison.
 
 Python/Go/TypeScript bindings, ownership/aliasing, lazy iteration, duplicate/unsorted maps, the cross-language round-trip, and semantic parity with FlatBuffers are also checked (`cargo test --test flatbuffers_comparison`, `(cd bindings/typescript && npm test)`, `go test ./bindings/go`, `./tests/cross_language_roundtrip.sh`, `./tests/generated_go_views.sh`). Benchmarks are available through `cargo bench --bench wire` and `cargo bench --bench compare`; they measure wire size, encoding/decoding, borrowed views, and allocations, but are not network benchmarks. Long-running validation is separate: `TYPIKON_STRESS_SECONDS=172800 ./tests/long_validation.sh`.
 

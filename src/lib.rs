@@ -19,7 +19,38 @@ mod wire;
 pub use artifacts::{
     GeneratedArtifacts, compile_schema, compile_schema_with_format, compile_schema_with_options,
 };
-pub use ast::{Enum, EnumVariant, Field, Flags, FlagsBit, Item, Schema, Struct, Type};
+pub use ast::{Enum, EnumVariant, Field, Flags, FlagsBit, Function, Item, Schema, Struct, Type};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FunctionDispatchError {
+    Missing { name: String },
+    Unknown { name: String },
+}
+
+pub fn validate_function_dispatch(
+    schema: &Schema,
+    implemented: &[&str],
+) -> Result<(), FunctionDispatchError> {
+    for function in &schema.functions {
+        if !implemented.contains(&function.name.as_str()) {
+            return Err(FunctionDispatchError::Missing {
+                name: function.name.clone(),
+            });
+        }
+    }
+    for name in implemented {
+        if !schema
+            .functions
+            .iter()
+            .any(|function| function.name == *name)
+        {
+            return Err(FunctionDispatchError::Unknown {
+                name: (*name).to_owned(),
+            });
+        }
+    }
+    Ok(())
+}
 pub use bridge::{
     BridgeKind, generate_bridge, generate_c_header, generate_go_binding, generate_python_binding,
     generate_typescript_binding,
@@ -76,6 +107,33 @@ mod tests {
             assert_eq!(schema.version, index as u16);
             assert_eq!(item.fields[0].ty, Type::Primitive((*primitive).into()));
         }
+    }
+
+    #[test]
+    fn validates_function_dispatch_coverage() {
+        let schema = parse_schema(
+            "#[version(1)] functions { user.create: Empty -> Empty; user.delete: Empty -> Empty; }",
+        )
+        .unwrap();
+        assert!(matches!(
+            validate_function_dispatch(&schema, &["user.create"]),
+            Err(FunctionDispatchError::Missing { .. })
+        ));
+        assert!(matches!(
+            validate_function_dispatch(&schema, &["user.create", "user.delete", "user.unknown"]),
+            Err(FunctionDispatchError::Unknown { .. })
+        ));
+        assert!(validate_function_dispatch(&schema, &["user.create", "user.delete"]).is_ok());
+    }
+
+    #[test]
+    fn accepts_function_without_trailing_semicolon() {
+        let schema = parse_schema(
+            "#[version(1)] struct EmptyStruct {} functions { health.check: Empty -> Empty }",
+        )
+        .unwrap();
+        assert_eq!(schema.functions.len(), 1);
+        assert_eq!(schema.functions[0].name, "health.check");
     }
 
     #[test]

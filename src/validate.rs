@@ -12,8 +12,31 @@ pub fn validate(schema: &Schema) -> Result<(), ParseError> {
             Item::Enum(x) => &x.name,
             Item::Flags(x) => &x.name,
         };
-        if !names.insert(name) {
+        if name == "Empty" || !names.insert(name) {
             return Err(error("duplicate item name"));
+        }
+    }
+    let mut function_names = HashSet::new();
+    for function in &schema.functions {
+        if !function_names.insert(&function.name)
+            || !function.name.contains('.')
+            || function.name.starts_with('.')
+            || function.name.ends_with('.')
+            || function.name.split('.').any(|part| part.is_empty())
+        {
+            return Err(error("invalid or duplicate function name"));
+        }
+        for ty in [&function.request, &function.result] {
+            if *ty != "Empty"
+                && !schema.items.iter().any(|item| match item {
+                    Item::Alias(x) => x.name == **ty,
+                    Item::Struct(x) => x.name == **ty,
+                    Item::Enum(x) => x.name == **ty,
+                    Item::Flags(x) => x.name == **ty,
+                })
+            {
+                return Err(error("function references an unknown type"));
+            }
         }
     }
     for item in &schema.items {

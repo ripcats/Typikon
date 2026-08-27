@@ -1,4 +1,6 @@
-use crate::ast::{Alias, Enum, EnumVariant, Field, Flags, FlagsBit, Item, Schema, Struct, Type};
+use crate::ast::{
+    Alias, Enum, EnumVariant, Field, Flags, FlagsBit, Function, Item, Schema, Struct, Type,
+};
 use crate::error::ParseError;
 use crate::limits::MAX_NESTING_DEPTH;
 
@@ -32,9 +34,17 @@ impl<'a> Parser<'a> {
         self.expect(")]")?;
         let mut items = Vec::new();
         let mut item_comments = Vec::new();
+        let mut functions = Vec::new();
         loop {
             let comment_start = self.comments.len();
             if self.eof() {
+                break;
+            }
+            if self.consume("functions") {
+                self.expect("{")?;
+                while !self.consume("}") {
+                    functions.push(self.parse_function()?);
+                }
                 break;
             }
             items.push(self.parse_item()?);
@@ -51,6 +61,31 @@ impl<'a> Parser<'a> {
             items,
             comments: self.comments,
             item_comments,
+            functions,
+        })
+    }
+
+    fn parse_function(&mut self) -> Result<Function, ParseError> {
+        self.skip_trivia();
+        let deprecated = self.parse_deprecated_attr()?;
+        let start = self.position;
+        while self.position < self.source.len()
+            && (self.source.as_bytes()[self.position].is_ascii_alphanumeric()
+                || matches!(self.source.as_bytes()[self.position], b'_' | b'.'))
+        {
+            self.position += 1;
+        }
+        let name = self.source[start..self.position].to_owned();
+        self.expect(":")?;
+        let request = self.identifier()?;
+        self.expect("->")?;
+        let result = self.identifier()?;
+        self.consume(";");
+        Ok(Function {
+            name,
+            request,
+            result,
+            deprecated,
         })
     }
 
@@ -150,6 +185,7 @@ impl<'a> Parser<'a> {
                 break;
             }
             let guard = self.parse_guard_attr()?;
+            let deprecated = self.parse_deprecated_attr()?;
             let name = self.identifier()?;
             self.expect(":")?;
             let ty = self.parse_type()?;
@@ -159,6 +195,7 @@ impl<'a> Parser<'a> {
                 guard,
                 exact_len,
                 ty,
+                deprecated,
             });
             if self.consume("}") {
                 break;
@@ -257,6 +294,20 @@ impl<'a> Parser<'a> {
             message: "exact length does not fit usize".into(),
             position: self.position,
         })
+    }
+
+    fn parse_deprecated_attr(&mut self) -> Result<Option<String>, ParseError> {
+        if !self.consume("#[deprecated(") {
+            return Ok(None);
+        }
+        self.expect("\"")?;
+        let start = self.position;
+        while self.position < self.source.len() && self.source.as_bytes()[self.position] != b'"' {
+            self.position += 1;
+        }
+        let message = self.source[start..self.position].to_owned();
+        self.expect("\")]")?;
+        Ok(Some(message))
     }
 
     fn identifier(&mut self) -> Result<String, ParseError> {

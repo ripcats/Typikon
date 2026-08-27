@@ -3,7 +3,7 @@
 ![Typikon Protocol](assets/cover.png)
 
 [![Версия](https://img.shields.io/badge/%D0%92%D0%B5%D1%80%D1%81%D0%B8%D1%8F-Beta-5865F2?style=for-the-badge&logo=github&logoColor=white)](#что-реально-проверено)
-[![Тесты](https://img.shields.io/badge/%D0%A2%D0%B5%D1%81%D1%82%D1%8B-82%20%D0%BF%D1%80%D0%BE%D0%B9%D0%B4%D0%B5%D0%BD%D0%BD%D1%8B%D1%85-3FB950?style=for-the-badge&logo=githubactions&logoColor=white)](#что-реально-проверено)
+[![Тесты](https://img.shields.io/badge/%D0%A2%D0%B5%D1%81%D1%82%D1%8B-85%20пройденных-3FB950?style=for-the-badge&logo=githubactions&logoColor=white)](#что-реально-проверено)
 [![Evgeny Gerber](https://img.shields.io/badge/Evgeny%20Gerber-2AABEE?style=for-the-badge&logo=telegram&logoColor=white)](https://ripcats.t.me)
 [![English](https://img.shields.io/badge/English-2D333B?style=for-the-badge&logo=libretranslate&logoColor=white)](README.en.md)
 
@@ -247,6 +247,39 @@ typikon generate public schema.typ --preserve-comments
 
 Без флага генератор выводит короткое предупреждение на английском.
 
+### Декларативные функции
+
+Source schema может содержать отдельный блок `functions`. Каждая функция задаёт canonical method name, request type и result type. `Empty` — встроенный тип с нулевым payload.
+
+```rust
+struct Document {
+    id: u64,
+    #[deprecated("use title")]
+    label: String,
+    title: String,
+}
+
+struct GetDocumentRequest {
+    id: u64,
+}
+
+struct HealthStatus {
+    ok: bool,
+}
+
+functions {
+    health.check: Empty -> HealthStatus;
+    document.get: GetDocumentRequest -> Document;
+
+    #[deprecated("use document.get")]
+    document.fetchLegacy: GetDocumentRequest -> Document;
+}
+```
+
+Функции не входят в обычный wire payload и не меняют C-ID или fingerprint структур. `#[deprecated("...")]` помечает поле или функцию как устаревшие, сохраняя совместимость и передавая SDK подсказку для миграции. Functions и атрибуты переносятся в public schema в том же порядке.
+
+Как и для полей `struct`, завершающий `;` у последней функции перед `}` можно не писать.
+
 ### Struct, enum и unit enum
 
 `struct` описывает один constructor:
@@ -352,7 +385,7 @@ Typikon — собственная schema-driven реализация бинар
 
 ## Что реально проверено
 
-Rust suite включает **82 теста: 76 unit и 6 integration** — parser и semantic validation, code generation, CLI, Layer/C-ID, wire round-trips, fixed byte arrays и exact-length checks, alias constraints, comments, limits, malformed input, maps, VarInt, optional markers, borrowed views, language-view generation, vectored writes, randomized inputs и round-trip сравнение с FlatBuffers.
+Rust suite включает **85 тестов: 79 unit и 6 integration** — parser и semantic validation, code generation, CLI, Layer/C-ID, wire round-trips, fixed byte arrays и exact-length checks, alias constraints, comments, functions, limits, malformed input, maps, VarInt, optional markers, borrowed views, language-view generation, vectored writes, randomized inputs и round-trip сравнение с FlatBuffers.
 
 Дополнительно проверяются Python/Go/TypeScript bindings, owner/aliasing, lazy iteration, duplicate/unsorted maps, cross-language round-trip и semantic parity с FlatBuffers (`cargo test --test flatbuffers_comparison`, `(cd bindings/typescript && npm test)`, `go test ./bindings/go`, `./tests/cross_language_roundtrip.sh`, `./tests/generated_go_views.sh`). Benchmarks: `cargo bench --bench wire` и `cargo bench --bench compare`; они измеряют wire size, encode/decode, borrowed views и allocations, но не являются сетевым benchmark. Длительная проверка запускается отдельно: `TYPIKON_STRESS_SECONDS=172800 ./tests/long_validation.sh`.
 

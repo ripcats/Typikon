@@ -236,12 +236,17 @@ pub fn generate_public_schema_with_options(
     }
     if !schema.functions.is_empty() {
         output.push_str("functions {\n");
-        for function in &schema.functions {
+        for (index, function) in schema.functions.iter().enumerate() {
             if let Some(message) = &function.deprecated {
                 output.push_str(&format!("    #[deprecated(\"{message}\")]\n"));
             }
+            let separator = if index + 1 == schema.functions.len() {
+                ""
+            } else {
+                ";"
+            };
             output.push_str(&format!(
-                "    {}: {} -> {};\n",
+                "    {}: {} -> {}{separator}\n",
                 function.name, function.request, function.result
             ));
         }
@@ -1464,7 +1469,7 @@ mod tests {
         )
         .unwrap();
         let public = generate_public_schema(&schema);
-        assert!(public.ends_with("functions {\n    system.ping: RpcData -> RpcData;\n    session.resume: RpcData -> RpcData;\n}"));
-        assert!(!public.ends_with(";"));
+        assert!(public.ends_with("functions {\n    system.ping: RpcData -> RpcData;\n    session.resume: RpcData -> RpcData\n}"));
+        assert!(!public.ends_with(";\n}"));
     }
 }
